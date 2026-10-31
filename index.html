@@ -12,7 +12,8 @@
     <link rel="stylesheet" href="styles.css" />
     <script>
       try {
-        var s = localStorage.getItem("hv_theme") || "auto";
+        var areaKey = localStorage.getItem("hv_active_area") === "family" ? "hv_family_" : "hv_";
+        var s = localStorage.getItem(areaKey + "theme") || "auto";
         document.documentElement.dataset.theme =
           s === "dark" || (s === "auto" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
       } catch (e) {}
@@ -22,7 +23,7 @@
     <header>
       <img class="brand-mark brand-logo" src="logo-128.png" alt="" width="42" height="42" />
       <div class="brand-copy">
-        <h1>NAR <span>Home</span></h1>
+        <h1>NAR <span id="appAreaName">Home</span></h1>
         <small>YOUR HOME. UNDER CONTROL.</small>
       </div>
       <button type="button" id="themeToggle" class="theme-toggle" aria-label="Dunkelmodus einschalten"></button>
@@ -30,6 +31,14 @@
         <span class="sr">Nicht synchronisiert</span>
       </button>
     </header>
+    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite" aria-hidden="true">
+      <div class="loading-card">
+        <span id="loadingIcon" class="loading-icon" aria-hidden="true"></span>
+        <b id="loadingTitle">Bitte warten</b>
+        <span id="loadingDescription" class="loading-description"></span>
+        <span class="loading-track" aria-hidden="true"><i></i></span>
+      </div>
+    </div>
     <main>
       <section id="v-home"></section>
       <section id="v-list" class="hide">
@@ -66,6 +75,39 @@
       <section id="v-stats" class="hide"></section>
       <section id="v-calendar" class="hide"></section>
       <section id="v-settings" class="hide"></section>
+      <section id="developerView" class="hide" aria-labelledby="developerTitle">
+        <div class="developer-head">
+          <button type="button" class="btn s" data-dev-back>Zurück</button>
+          <span class="settings-dialog-kicker">Versteckte Ansicht · kein Zugriffsschutz</span>
+          <h2 id="developerTitle">Developer-Konsole</h2>
+        </div>
+        <div class="facts">
+          <div><b id="developerDriveStatus">–</b><small>Google Drive</small></div>
+          <div><b id="developerSyncStatus">–</b><small>Synchronisation</small></div>
+          <div><b id="developerLogCount">0</b><small>Protokolleinträge</small></div>
+          <div><b id="developerVersion">–</b><small>App-Version</small></div>
+          <div><b id="developerRuntime">–</b><small>Laufzeit</small></div>
+        </div>
+        <label class="f developer-filter"><span>Protokolle filtern</span>
+          <select id="developerFilter">
+            <option value="all">Alle Kategorien</option>
+            <option value="error">Fehler</option>
+            <option value="warning">Warnungen</option>
+            <option value="drive">Google Drive</option>
+            <option value="sync">Synchronisation</option>
+            <option value="network">Netzwerk</option>
+            <option value="upload">Uploads</option>
+            <option value="download">Downloads</option>
+            <option value="system">System</option>
+          </select>
+        </label>
+        <div class="settings-tools">
+          <button type="button" class="btn s" data-dev-copy>Protokolle kopieren</button>
+          <button type="button" class="btn s" data-dev-export>Exportieren</button>
+          <button type="button" class="btn s x" data-dev-clear>Protokolle löschen</button>
+        </div>
+        <div id="developerLogs" class="developer-logs" aria-live="polite"></div>
+      </section>
     </main>
 
     <nav>
@@ -353,6 +395,25 @@
           ><a class="btn s" id="previewDrive" target="_blank" rel="noopener">In Drive öffnen</a
           ><button class="btn" id="previewDownload">⬇ Herunterladen</button>
         </div>
+      </div>
+    </div>
+
+    <div id="areaPicker" class="area-picker" role="dialog" aria-modal="true" aria-labelledby="areaPickerTitle">
+      <div class="area-picker-card">
+        <span class="settings-dialog-kicker">Privater Datenbereich</span>
+        <h2 id="areaPickerTitle">Bereich auswählen</h2>
+        <p>Die Inhalte, Einstellungen und Google-Drive-Ablagen der Bereiche bleiben getrennt.</p>
+        <small>Die Auswahl ist kein Zugriffsschutz. Google Drive und dessen Ordnerfreigaben entscheiden über den tatsächlichen Zugriff.</small>
+        <div class="area-options">
+          <button type="button" class="area-option" data-area-select="home">
+            <b>NAR Home</b><span>Haushalt und private Verträge</span>
+          </button>
+          <button type="button" class="area-option" data-area-select="family">
+            <b>NAR Family</b><span>Familienverwaltung und gemeinsame Dokumente</span>
+          </button>
+        </div>
+        <small id="areaCurrent"></small>
+        <button type="button" class="btn s area-cancel hide" id="areaCancel">Zurück</button>
       </div>
     </div>
 
