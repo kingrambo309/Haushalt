@@ -1,10 +1,14 @@
 const $ = (s) => document.querySelector(s);
 
 // Version shown under Einstellungen → Versionsinfo. Raise it with every release (also renews the offline cache).
-const APP_VERSION = "14.7",
+const APP_VERSION = "14.8",
   APP_DATE = "2026-10-31",
   DATA_FORMAT = 2;
 const CHANGELOG = [
+  {
+    v: "14.8", date: "2026-10-31",
+    items: ["Garage und Immobilien mit Fahrzeugarten, Eigentum und Nutzung", "Gemeinsame Einkaufsliste mit Standardartikeln ohne Preise"],
+  },
   {
     v: "14.7",
     date: "2026-10-31",
@@ -216,6 +220,8 @@ const SUB = {
 };
 // Object kinds per category ("Objektarten", optional), e.g. Mobilfunk → objects "Handy Ich", "Handy Partner/in".
 const OBJ = {
+  Fahrzeug: ["Auto", "Motorrad", "Wohnmobil", "Fahrrad", "Anhänger", "Sonstiges Fahrzeug"],
+  Wohnen: ["Wohnung", "Haus", "Garage / Stellplatz", "Grundstück", "Sonstige Immobilie"],
   Versicherung: [
     "Haftpflicht",
     "Hausrat",
@@ -228,6 +234,20 @@ const OBJ = {
   Vertrag: ["Internet & Telefon", "Mobilfunk", "Strom & Gas", "Abonnement", "Mitgliedschaft", "Sonstiger Vertrag"],
 };
 const DEFAULT_PEOPLE = ["Ich", "Partner/in", "Gemeinsam"];
+// Keep persisted category keys and Drive paths compatible with existing devices.
+const categoryName = (key) => key === "Fahrzeug" ? "Garage" : key === "Wohnen" ? "Immobilien" : key;
+const PROPERTY_OWNERSHIP = ["Gemietet", "Eigentum"];
+const PROPERTY_USAGE = ["Selbst bewohnt", "Vermietet", "Leerstehend"];
+const SHOPPING_DEFAULTS = {
+  "Obst & Gemüse": ["Äpfel", "Bananen", "Orangen", "Zitronen", "Beeren", "Trauben", "Tomaten", "Gurken", "Paprika", "Karotten", "Kartoffeln", "Zwiebeln", "Knoblauch", "Salat", "Brokkoli", "Zucchini", "Pilze"],
+  "Brot & Frühstück": ["Brot", "Brötchen", "Toast", "Haferflocken", "Müsli", "Marmelade", "Honig", "Nusscreme"],
+  "Milchprodukte & Eier": ["Milch", "Haferdrink", "Joghurt", "Quark", "Butter", "Käse", "Frischkäse", "Sahne", "Eier"],
+  "Fleisch, Fisch & Alternativen": ["Hähnchen", "Hackfleisch", "Wurst", "Schinken", "Lachs", "Thunfisch", "Tofu", "Veggie-Burger"],
+  "Vorrat & Kochen": ["Nudeln", "Reis", "Mehl", "Zucker", "Salz", "Pfeffer", "Olivenöl", "Essig", "Passierte Tomaten", "Tomatenmark", "Linsen", "Bohnen", "Mais", "Brühe", "Backpulver"],
+  "Getränke": ["Wasser", "Saft", "Kaffee", "Tee", "Kakao"],
+  "Tiefkühl & Snacks": ["Tiefkühlgemüse", "Pizza", "Eis", "Nüsse", "Schokolade", "Chips", "Kekse"],
+  "Haushalt & Pflege": ["Toilettenpapier", "Küchenrolle", "Taschentücher", "Müllbeutel", "Spülmittel", "Spülmaschinentabs", "Waschmittel", "Allzweckreiniger", "Schwämme", "Seife", "Duschgel", "Shampoo", "Zahnpasta", "Deo", "Windeln", "Feuchttücher", "Tierfutter"],
+};
 const SETTINGS_LISTS = {
   people: { label: "Personen („Gehört zu“)", key: "people" },
   insuranceCompanies: { label: "Versicherungsgesellschaften", key: "insuranceCompanies" },
@@ -251,6 +271,7 @@ function normalizeData() {
   data.entries = data.entries || [];
   data.events = data.events || [];
   data.financeTransactions = data.financeTransactions || [];
+  data.shoppingItems = data.shoppingItems || [];
   data.deletedEvents = data.deletedEvents || [];
   data.trash = data.trash || [];
   data.purgedTrash = data.purgedTrash || [];
@@ -276,6 +297,9 @@ function normalizeData() {
     });
   }
   if (!s.customLists.people) s.customLists.people = DEFAULT_PEOPLE.slice();
+  for (const cat of ["Fahrzeug", "Wohnen"]) {
+    s.objectTypes[cat] = [...new Set([...(s.objectTypes[cat] || []), ...OBJ0[cat]])];
+  }
   data.entries.forEach(migrateEntry);
 }
 // Converts an entry of the old model into an object (idempotent, so data from older devices is handled too).
@@ -357,6 +381,8 @@ let token = null,
   editingFinanceId = null,
   financeMonth = dateKey(new Date()).slice(0, 7),
   rentalMonth = dateKey(new Date()).slice(0, 7),
+  shoppingQuery = "",
+  propertyUsageFilter = "",
   isNew = false,
   timer = null,
   tc = null,
@@ -779,6 +805,7 @@ function merge(a, b) {
     del: [...del],
     events: mergedEvents,
     financeTransactions: mergeSimple(a.financeTransactions || [], b.financeTransactions || []),
+    shoppingItems: mergeSimple(a.shoppingItems || [], b.shoppingItems || []),
     deletedEvents,
     settings: (sb.upd || 0) > (sa.upd || 0) ? sb : sa,
     purgedTrash: [...purgedTrash],
@@ -815,12 +842,14 @@ function needsPush(remote, local) {
   const rEntries = new Map((remote.entries || []).map((e) => [e.id, e.upd || 0])),
     rEvents = new Map((remote.events || []).map((e) => [e.id, e.updatedAt || 0])),
     rFinance = new Map((remote.financeTransactions || []).map((t) => [t.id, t.updatedAt || 0])),
+    rShopping = new Map((remote.shoppingItems || []).map((t) => [t.id, t.updatedAt || 0])),
     rDel = new Set(remote.del || []),
     rDelEv = new Set(remote.deletedEvents || []);
   return (
     local.entries.some((e) => !rEntries.has(e.id) || rEntries.get(e.id) < (e.upd || 0)) ||
     (local.events || []).some((e) => !rEvents.has(e.id) || rEvents.get(e.id) < (e.updatedAt || 0)) ||
     (local.financeTransactions || []).some((t) => !rFinance.has(t.id) || rFinance.get(t.id) < (t.updatedAt || 0)) ||
+    (local.shoppingItems || []).some((t) => !rShopping.has(t.id) || rShopping.get(t.id) < (t.updatedAt || 0)) ||
     (local.del || []).some((id) => !rDel.has(id)) ||
     (local.deletedEvents || []).some((id) => !rDelEv.has(id)) ||
     (local.purgedTrash || []).some((key) => !(remote.purgedTrash || []).includes(key)) ||
@@ -1323,7 +1352,7 @@ function rowHtml(e) {
     (e.fav ? icon("star", "inline-ic fav-ic") : "") +
     esc(e.title) +
     "</b><small>" +
-    esc(e.objType || e.cat) +
+    esc(e.objType || categoryName(e.cat)) +
     (e.owner ? " · " + esc(e.owner) : "") +
     (first ? " · " + esc(first) : "") +
     (k ? " · " + k + icon("paperclip", "inline-ic") : "") +
@@ -1443,7 +1472,7 @@ function renderHome() {
             '"><span class="ic">' +
             icon(T[c].i) +
             "</span><b>" +
-            esc(c) +
+            esc(categoryName(c)) +
             "</b><small>" +
             L.length +
             (L.length === 1 ? " Eintrag" : " Einträge") +
@@ -1501,6 +1530,7 @@ function openMore() {
     ["stats", "chart", "Statistik", "Kosten, Fristen und Spar-Hinweise"],
     ["rentals", "house", "Vermietung", "Mietobjekte und monatliche Zahlungseingänge"],
     ["finances", "receipt-text", "Finanzen", "Manuelles Einnahmen- und Ausgabenbuch"],
+    ["shopping", "list", "Einkaufsliste", "Gemeinsam planen und Standardartikel hinzufügen"],
     ["emergency", "lifebuoy", "Notfallmappe", "Alle wichtigen Daten als PDF"],
     ["settings", "settings", "Einstellungen", "Kategorien, Backup, Darstellung und Google Drive"],
   ];
@@ -1546,12 +1576,23 @@ function openMore() {
     if (e.key === "Escape") close();
   });
 }
+const propertyUsage = (e) => e.propertyUsage || (e.rental?.active ? "Vermietet" : "");
+function renderPropertyFilter() {
+  $("#propertyFilter").classList.toggle("hide", filter !== "Wohnen");
+  $("#propertyFilter").innerHTML = '<label class="f"><span>Nutzung</span><select id="propertyUsageFilter">' +
+    optionsHtml(PROPERTY_USAGE, propertyUsageFilter, "Alle Immobilien") + '</select></label>';
+}
+$("#propertyFilter").onchange = (e) => {
+  propertyUsageFilter = e.target.value;
+  renderList();
+};
 function renderList() {
   $("#chips").innerHTML = ["Alle", ...Object.keys(T)]
     .map(
-      (c) => '<button class="chip' + (c === filter ? " on" : "") + '" data-c="' + esc(c) + '">' + esc(c) + "</button>",
+      (c) => '<button class="chip' + (c === filter ? " on" : "") + '" data-c="' + esc(c) + '">' + esc(categoryName(c)) + "</button>",
     )
     .join("");
+  $("#q").placeholder = filter === "Fahrzeug" ? "Fahrzeuge in der Garage durchsuchen" : filter === "Wohnen" ? "Immobilien durchsuchen" : "Einträge durchsuchen";
   const hay = (e) =>
     (
       e.title +
@@ -1575,7 +1616,8 @@ function renderList() {
       .join("");
   po.value = person;
   const l = data.entries.filter(
-    (e) => (filter === "Alle" || e.cat === filter) && (!person || e.owner === person) && hay(e).includes(q),
+    (e) => (filter === "Alle" || e.cat === filter) && (!person || e.owner === person) &&
+      (filter !== "Wohnen" || !propertyUsageFilter || propertyUsage(e) === propertyUsageFilter) && hay(e).includes(q),
   );
   l.sort(
     (a, b) =>
@@ -1588,7 +1630,8 @@ function renderList() {
   );
   // Within one category that has object kinds (e.g. Vertrag → Mobilfunk), the list is grouped by kind.
   const kinds = filter !== "Alle" ? OBJ[filter] || [] : [];
-  if (kinds.length && l.length) {
+  renderPropertyFilter();
+  if (kinds.length && l.length && filter !== "Fahrzeug") {
     const groups = [...kinds, ""].map((k) => [k, l.filter((e) => (kinds.includes(e.objType) ? e.objType : "") === k)]);
     $("#list").innerHTML = groups
       .filter(([, L]) => L.length)
@@ -1608,7 +1651,7 @@ function renderDocs2() {
   sel.innerHTML =
     '<option value="Alle">Alle Kategorien</option>' +
     Object.keys(T)
-      .map((c) => '<option value="' + esc(c) + '">' + esc(c) + "</option>")
+      .map((c) => '<option value="' + esc(c) + '">' + esc(categoryName(c)) + "</option>")
       .join("");
   sel.value = cat;
   const f = L.filter(
@@ -1649,7 +1692,7 @@ function renderDocs2() {
           "</b><small>" +
           esc(x.e.title) +
           " · " +
-          esc(x.e.cat) +
+          esc(categoryName(x.e.cat)) +
           (x.d.subcategory ? " / " + esc(x.d.subcategory) : "") +
           '</small></div><button class="ib" data-dl="' +
           esc(x.d.id) +
@@ -1676,9 +1719,11 @@ function renderObjectDetail() {
   $("#v-object").innerHTML =
     '<div class="detail-head"><button type="button" class="btn s" data-detail-back>← Zurück</button><button type="button" class="btn" data-detail-edit>Bearbeiten</button></div>' +
     '<div class="detail-title"><span class="ic" style="--c:' + esc(tp(e).c) + '">' + icon(tp(e).i) + '</span><div><small>' +
-    esc(e.cat) + (e.objType ? " · " + esc(e.objType) : "") + '</small><h2>' + esc(e.title) + '</h2>' +
+    esc(categoryName(e.cat)) + (e.objType ? " · " + esc(e.objType) : "") + '</small><h2>' + esc(e.title) + '</h2>' +
     (e.owner ? '<p class="mu">' + esc(e.owner) + "</p>" : "") + "</div></div>" +
     '<div class="card"><h3>Objektdaten</h3>' +
+    (e.cat === "Wohnen" ? '<div class="detail-line"><span>Eigentumsverhältnis</span><b>' + esc(e.propertyOwnership || "Nicht angegeben") +
+      '</b></div><div class="detail-line"><span>Nutzung</span><b>' + esc(propertyUsage(e) || "Nicht angegeben") + '</b></div>' : "") +
     (metadata.length ? metadata.map(([label, value]) => '<div class="detail-line"><span>' + esc(label) + "</span><b>" + esc(value) + "</b></div>").join("") : '<p class="mu">Keine zusätzlichen Angaben.</p>') +
     (e.note ? '<h4>Notizen</h4><p class="detail-note">' + esc(e.note).replace(/\n/g, "<br>") + "</p>" : "") + "</div>" +
     '<div class="card"><h3>Kosten</h3>' +
@@ -1692,7 +1737,7 @@ function renderObjectDetail() {
     (docs.length ? docs.map((d, i) => '<button type="button" class="detail-doc" data-detail-doc="' + i + '">' + icon(fileIcon(d.name) === "▤" ? "file-text" : "image") +
       "<span><b>" + esc(d.name) + "</b><small>" + esc(d.subcategory || "Allgemein") + "</small></span></button>").join("") : '<p class="mu">Noch keine Unterlagen.</p>') + "</div>";
 }
-const activeRentals = () => data.entries.filter((e) => e.cat === "Wohnen" && e.rental && e.rental.active);
+const activeRentals = () => data.entries.filter((e) => e.cat === "Wohnen" && propertyUsage(e) === "Vermietet" && e.rental);
 function rentalMonthActive(rental, month) {
   const first = month + "-01";
   const last = month + "-31";
@@ -1723,9 +1768,110 @@ function renderRentals() {
               '" data-rent-toggle="' + esc(e.id) + '">' + (paid ? "Eingang zurücknehmen" : "Miete als eingegangen markieren") + "</button>" :
               '<p class="mu">Für diesen Monat besteht laut Mietzeitraum kein Mietverhältnis.</p>') + '</article>';
         }).join("");
-    })() : '<div class="card"><b>Noch keine vermieteten Objekte</b><p class="mu">Lege unter „Einträge → Wohnen“ ein Objekt an und aktiviere dort „Dieses Objekt ist vermietet“.</p></div>');
+    })() : '<div class="card"><b>Noch keine vermieteten Objekte</b><p class="mu">Lege unter „Immobilien“ ein Objekt mit Nutzung „Vermietet“ an.</p></div>');
 }
 const visibleTransactions = () => data.financeTransactions.filter((t) => !t.deletedAt && (t.date || "").slice(0, 7) === financeMonth);
+const shoppingNameKey = (name) => name.trim().toLocaleLowerCase("de-DE").replace(/\s+/g, " ");
+const shoppingVisible = () => data.shoppingItems.filter((item) => !item.deletedAt);
+function addShoppingItem(name, quantity = "") {
+  name = name.trim();
+  if (!name) {
+    showToast("Bitte einen Artikel eingeben.");
+    return;
+  }
+  const existing = shoppingVisible().find((item) => shoppingNameKey(item.name) === shoppingNameKey(name));
+  if (existing && !existing.done) {
+    showToast("Dieser Artikel steht bereits auf der Liste.");
+    return;
+  }
+  if (existing) {
+    existing.done = false;
+    existing.quantity = quantity.trim() || existing.quantity;
+    existing.updatedAt = Math.max(Date.now(), (existing.updatedAt || 0) + 1);
+  } else {
+    data.shoppingItems.push({
+      id: "shop-" + crypto.randomUUID(), name, quantity: quantity.trim(), done: false, updatedAt: Date.now(),
+    });
+  }
+  saveDataLocal();
+  renderShopping();
+}
+function renderShopping() {
+  const items = shoppingVisible(),
+    open = items.filter((item) => !item.done),
+    done = items.filter((item) => item.done);
+  const row = (item) => '<div class="shopping-row' + (item.done ? ' shopping-done' : '') + '">' +
+    '<label><input type="checkbox" data-shopping-check="' + esc(item.id) + '"' + (item.done ? ' checked' : '') +
+    '><span><b>' + esc(item.name) + '</b>' + (item.quantity ? '<small>' + esc(item.quantity) + '</small>' : '') +
+    '</span></label><button class="ib" type="button" data-shopping-quantity="' + esc(item.id) + '" aria-label="Menge ändern">' +
+    icon("pencil") + '</button><button class="ib" type="button" data-shopping-delete="' + esc(item.id) +
+    '" aria-label="Artikel entfernen">' + icon("trash") + '</button></div>';
+  $("#v-shopping").innerHTML = '<h2>Einkaufsliste</h2><p class="mu">Gemeinsam planen, beim Einkaufen abhaken. Ohne Preise.</p>' +
+    '<form id="shoppingAdd" class="shopping-add"><label class="f"><span>Artikel</span><input id="shoppingName" maxlength="120" required placeholder="z. B. Milch"></label>' +
+    '<label class="f"><span>Menge (optional)</span><input id="shoppingQuantity" maxlength="60" placeholder="z. B. 2 Liter"></label>' +
+    '<button class="btn" type="submit">Hinzufügen</button></form>' +
+    '<h3>Offen · ' + open.length + '</h3><div class="card">' + (open.map(row).join("") || '<p class="mu">Alles eingekauft – oder füge neue Artikel hinzu.</p>') +
+    '</div>' + (done.length ? '<details class="card"><summary>Erledigt · ' + done.length + '</summary>' + done.map(row).join("") +
+    '<button type="button" class="btn s w" data-shopping-clear>Erledigte entfernen</button></details>' : "") +
+    '<h3>Standardartikel schnell hinzufügen</h3><input type="search" id="shoppingSearch" placeholder="Standardartikel suchen" value="' +
+    esc(shoppingQuery) + '"><div id="shoppingSuggestions"></div>';
+  renderShoppingSuggestions();
+}
+function renderShoppingSuggestions() {
+  const keys = new Set(shoppingVisible().filter((item) => !item.done).map((item) => shoppingNameKey(item.name)));
+  $("#shoppingSuggestions").innerHTML = Object.entries(SHOPPING_DEFAULTS).map(([group, names]) => {
+    const matching = names.filter((name) => shoppingNameKey(name).includes(shoppingNameKey(shoppingQuery)));
+    return matching.length ? '<details class="shopping-group"' + (shoppingQuery ? ' open' : '') + '><summary>' +
+      esc(group) + '</summary><div class="shopping-suggestions">' + matching.map((name) => '<button type="button" class="chip" data-shopping-add="' +
+      esc(name) + '"' + (keys.has(shoppingNameKey(name)) ? ' disabled' : '') + '>' + esc(name) + '</button>').join("") + '</div></details>' : '';
+  }).join("") || '<p class="mu">Keine Standardartikel gefunden. Du kannst oben einen eigenen Artikel hinzufügen.</p>';
+}
+$("#v-shopping").onsubmit = (e) => {
+  if (e.target.id !== "shoppingAdd") return;
+  e.preventDefault();
+  addShoppingItem($("#shoppingName").value, $("#shoppingQuantity").value);
+};
+$("#v-shopping").oninput = (e) => {
+  if (e.target.id !== "shoppingSearch") return;
+  shoppingQuery = e.target.value;
+  renderShoppingSuggestions();
+};
+$("#v-shopping").onchange = (e) => {
+  const id = e.target.dataset.shoppingCheck;
+  const item = shoppingVisible().find((item) => item.id === id);
+  if (!item) return;
+  item.done = e.target.checked;
+  item.updatedAt = Math.max(Date.now(), (item.updatedAt || 0) + 1);
+  saveDataLocal();
+  renderShopping();
+};
+$("#v-shopping").onclick = async (e) => {
+  const button = e.target.closest("button");
+  if (!button) return;
+  if (button.dataset.shoppingAdd) {
+    addShoppingItem(button.dataset.shoppingAdd);
+    return;
+  }
+  if (button.hasAttribute("data-shopping-clear")) {
+    if (!(await showConfirm("Erledigte Artikel entfernen?", "Nur abgehakte Artikel werden entfernt.", "Entfernen"))) return;
+    shoppingVisible().filter((item) => item.done).forEach((item) => {
+      item.updatedAt = Math.max(Date.now(), (item.updatedAt || 0) + 1);
+      item.deletedAt = item.updatedAt;
+    });
+  } else {
+    const item = shoppingVisible().find((item) => item.id === (button.dataset.shoppingDelete || button.dataset.shoppingQuantity));
+    if (!item) return;
+    if (button.dataset.shoppingQuantity) {
+      const quantity = await showPrompt("Menge ändern", item.name, item.quantity || "", "Speichern");
+      if (quantity === null) return;
+      item.quantity = quantity.trim();
+    }
+    item.updatedAt = Math.max(Date.now(), (item.updatedAt || 0) + 1);
+    if (button.dataset.shoppingDelete) item.deletedAt = item.updatedAt;
+  }
+  saveDataLocal();
+  renderShopping();
+};
 function renderFinances() {
   const monthTransactions = visibleTransactions(),
     income = monthTransactions.filter((t) => t.type === "income").reduce((s, t) => s + (+t.amount || 0), 0),
@@ -1775,7 +1921,7 @@ function renderStats() {
         (x) =>
           '<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between"><span style="display:flex;align-items:center;gap:8px">' +
           icon(T[x.c].i) +
-          esc(x.c) +
+          esc(categoryName(x.c)) +
           "</span><b>" +
           x.n +
           '</b></div><div class="bw" style="--c:' +
@@ -1827,7 +1973,7 @@ function renderStats() {
             '<div class="leg" style="--c:' +
             esc(T[x.c].c) +
             '"><i></i>' +
-            esc(x.c) +
+            esc(categoryName(x.c)) +
             ' <span class="mu">' +
             Math.round((x.v / mo) * 100) +
             " %</span><b>" +
@@ -1986,7 +2132,7 @@ function renderCalendar() {
         ": " +
         esc(x.e.title) +
         '</b><small><span class="event-badge dl">Frist</span>' +
-        esc(x.e.cat) +
+        esc(categoryName(x.e.cat)) +
         "</small></div></div>",
     )
     .join("");
@@ -2061,7 +2207,7 @@ function renderSettings() {
       kinds = OBJ[c] || [];
     h +=
       '<div class="settings-item"><span><b>' +
-      esc(c) +
+      esc(categoryName(c)) +
       '</b><small class="doc-meta">' +
       subs.length +
       " Unterlagen-Arten" +
@@ -2069,13 +2215,13 @@ function renderSettings() {
       '</small></span><button type="button" class="icon-btn" data-edit-cat="' +
       esc(c) +
       '" aria-label="' +
-      esc(c) +
+      esc(categoryName(c)) +
       ' bearbeiten" title="Bearbeiten">' +
       icon("pencil") +
       '</button><button type="button" class="icon-btn danger" data-del-cat="' +
       esc(c) +
       '" aria-label="' +
-      esc(c) +
+      esc(categoryName(c)) +
       ' löschen" title="Löschen">' +
       icon("trash") +
       "</button></div>";
@@ -2918,7 +3064,7 @@ function render() {
     renderDeveloperConsole();
     return;
   }
-  ["home", "list", "object", "rentals", "finances", "docs", "stats", "calendar", "settings"].forEach((t) =>
+  ["home", "list", "object", "rentals", "finances", "shopping", "docs", "stats", "calendar", "settings"].forEach((t) =>
     $("#v-" + t).classList.toggle("hide", t !== tab),
   );
   document
@@ -2927,7 +3073,7 @@ function render() {
       b.classList.toggle(
         "on",
         b.dataset.t === tab ||
-        (b.dataset.action === "more" && ["docs", "stats", "settings", "rentals", "finances", "object"].includes(tab)),
+        (b.dataset.action === "more" && ["docs", "stats", "settings", "rentals", "finances", "shopping", "object"].includes(tab)),
       ),
     );
   ({
@@ -2936,6 +3082,7 @@ function render() {
     object: renderObjectDetail,
     rentals: renderRentals,
     finances: renderFinances,
+    shopping: renderShopping,
     docs: renderDocs2,
     stats: renderStats,
     calendar: renderCalendar,
@@ -3056,7 +3203,7 @@ console.warn = (...args) => {
 const optionsHtml = (list, selected, emptyLabel) =>
   (emptyLabel !== undefined ? '<option value="">' + esc(emptyLabel) + "</option>" : "") +
   list
-    .map((x) => '<option value="' + esc(x) + '"' + (x === selected ? " selected" : "") + ">" + esc(x) + "</option>")
+    .map((x) => '<option value="' + esc(x) + '"' + (x === selected ? " selected" : "") + ">" + esc(categoryName(x)) + "</option>")
     .join("");
 // Object kind ("Art"), owner ("Gehört zu") and the document group for new uploads.
 function renderObjectSelects() {
@@ -3253,14 +3400,17 @@ function openSheet(e, nw) {
   sheetUploads = [];
   sheetRemovals = [];
   sheetCreatedFolder = null;
-  $("#sht").textContent = nw ? "Neu: " + cur.cat : cur.title || "Bearbeiten";
+  $("#sht").textContent = nw ? "Neu: " + categoryName(cur.cat) : cur.title || "Bearbeiten";
   $("#fc").innerHTML = optionsHtml(Object.keys(T), cur.cat);
   $("#ft").value = cur.title || "";
   $("#docSub").innerHTML = "";
   renderObjectSelects();
   $("#fx").innerHTML = fieldsHtml();
   $("#rentalFields").classList.toggle("hide", cur.cat !== "Wohnen");
-  $("#rentalActive").checked = !!(cur.rental && cur.rental.active);
+  $("#propertyFields").classList.toggle("hide", cur.cat !== "Wohnen");
+  $("#propertyOwnership").value = cur.propertyOwnership || "";
+  $("#propertyUsage").value = propertyUsage(cur);
+  $("#rentalActive").checked = propertyUsage(cur) === "Vermietet";
   $("#rentalDetails").classList.toggle("hide", !$("#rentalActive").checked);
   $("#rentalTenant").value = cur.rental?.tenant || "";
   $("#rentalRent").value = cur.rental?.monthlyRent ?? "";
@@ -4113,7 +4263,14 @@ $("#financeDelete").onclick = async () => {
   saveDataLocal();
   renderFinances();
 };
-$("#rentalActive").onchange = () => $("#rentalDetails").classList.toggle("hide", !$("#rentalActive").checked);
+$("#rentalActive").onchange = () => {
+  $("#propertyUsage").value = $("#rentalActive").checked ? "Vermietet" : "";
+  $("#rentalDetails").classList.toggle("hide", !$("#rentalActive").checked);
+};
+$("#propertyUsage").onchange = () => {
+  $("#rentalActive").checked = $("#propertyUsage").value === "Vermietet";
+  $("#rentalDetails").classList.toggle("hide", !$("#rentalActive").checked);
+};
 $("#dlist").onclick = async (e) => {
   const b = e.target.closest("button");
   if (!b) return;
@@ -4162,6 +4319,7 @@ $("#fc").onchange = () => {
   readCostFields();
   cur.cat = $("#fc").value;
   $("#rentalFields").classList.toggle("hide", cur.cat !== "Wohnen");
+  $("#propertyFields").classList.toggle("hide", cur.cat !== "Wohnen");
   cur.objType = "";
   renderObjectSelects();
   $("#fx").innerHTML = fieldsHtml();
@@ -4411,6 +4569,8 @@ $("#fs").onclick = () => {
   cur.objType = $("#fobj").value;
   cur.owner = $("#fown").value;
   if (cur.cat === "Wohnen") {
+    cur.propertyOwnership = $("#propertyOwnership").value;
+    cur.propertyUsage = $("#propertyUsage").value;
     const rentalValues = ["#rentalRent", "#rentalExpenses", "#rentalDeposit"].map((selector) => $(selector).value);
     if (rentalValues.some((value) => value !== "" && (!Number.isFinite(+value) || +value < 0))) {
       showAlert("Ungültige Mietdaten", "Miete, laufende Kosten und Kaution müssen gültige Beträge ab 0 sein.");
@@ -4631,7 +4791,9 @@ const costsText = (e) =>
     .join(", ");
 const CONFLICT_FIELDS = [
   ["title", "Bezeichnung"],
-  ["cat", "Kategorie"],
+  ["cat", "Kategorie", categoryName],
+  ["propertyOwnership", "Eigentumsverhältnis"],
+  ["propertyUsage", "Nutzung"],
   ["objType", "Art"],
   ["owner", "Gehört zu"],
   ["costs", "Kosten", (v, e) => costsText(e)],
@@ -4930,7 +5092,7 @@ document
 
 /* Main navigation + Android/browser back-button handling */
 function navigateTo(nextTab, { push = true } = {}) {
-  if (!["home", "list", "object", "rentals", "finances", "docs", "calendar", "settings", "stats"].includes(nextTab)) return;
+  if (!["home", "list", "object", "rentals", "finances", "shopping", "docs", "calendar", "settings", "stats"].includes(nextTab)) return;
   if (nextTab === "settings" && tab !== "settings") settingsOpen = [];
   tab = nextTab;
   render();
@@ -5149,6 +5311,7 @@ function backupPayload() {
       trash: data.trash || [],
       purgedTrash: data.purgedTrash || [],
       financeTransactions: data.financeTransactions || [],
+      shoppingItems: data.shoppingItems || [],
     },
   };
 }
@@ -5370,7 +5533,8 @@ async function importBackup(file) {
       if (e.id.endsWith("-r" + now)) e.upd = now;
     });
     data = merge({
-      entries, events, financeTransactions: imp.financeTransactions || [], settings: data.settings, del: [], deletedEvents: [],
+      entries, events, financeTransactions: imp.financeTransactions || [], shoppingItems: imp.shoppingItems || [],
+      settings: data.settings, del: [], deletedEvents: [],
     }, data);
   } else {
     const keep = new Set(entries.map((e) => e.id)),
@@ -5379,6 +5543,8 @@ async function importBackup(file) {
     events.forEach((e) => (e.updatedAt = now));
     const restoredFinance = (imp.financeTransactions || []).map((t) => ({ ...t, updatedAt: now }));
     const restoredFinanceIds = new Set(restoredFinance.map((t) => t.id));
+    const restoredShopping = (imp.shoppingItems || []).map((item) => ({ ...item, updatedAt: now }));
+    const restoredShoppingIds = new Set(restoredShopping.map((item) => item.id));
     data = {
       ...data,
       entries,
@@ -5387,6 +5553,11 @@ async function importBackup(file) {
         ...restoredFinance,
         ...data.financeTransactions.filter((t) => !restoredFinanceIds.has(t.id))
           .map((t) => ({ ...t, deletedAt: now, updatedAt: now })),
+      ],
+      shoppingItems: [
+        ...restoredShopping,
+        ...data.shoppingItems.filter((item) => !restoredShoppingIds.has(item.id))
+          .map((item) => ({ ...item, deletedAt: now, updatedAt: now })),
       ],
       settings: imp.settings ? { ...imp.settings, upd: now } : data.settings,
       del: [...delSet, ...data.entries.filter((e) => !keep.has(e.id)).map((e) => e.id)],
@@ -5429,7 +5600,7 @@ function emergencyHtml() {
             "</td><td>" +
             esc(x.e.title) +
             " (" +
-            esc(x.e.cat) +
+            esc(categoryName(x.e.cat)) +
             ")</td></tr>",
         )
         .join("") +
@@ -5439,12 +5610,16 @@ function emergencyHtml() {
     if (!L.length) return;
     h +=
       "<h2>" +
-      esc(c) +
+      esc(categoryName(c)) +
       "</h2>" +
       L.map((e) => {
         const x = e.x || {},
           rows = [];
         if (e.objType) rows.push(["Art", e.objType]);
+        if (e.cat === "Wohnen") {
+          if (e.propertyOwnership) rows.push(["Eigentumsverhältnis", e.propertyOwnership]);
+          if (propertyUsage(e)) rows.push(["Nutzung", propertyUsage(e)]);
+        }
         if (e.owner) rows.push(["Gehört zu", e.owner]);
         Object.keys(x).forEach((k) => x[k] && rows.push([k, x[k]]));
         costItems(e).forEach((c) =>
@@ -5535,7 +5710,7 @@ function pickObject(cat) {
   b.className = "settings-dialog-backdrop";
   b.innerHTML =
     '<div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="nar-pickobj"><div class="settings-dialog-head"><div class="settings-dialog-kicker">' +
-    esc(cat) +
+    esc(categoryName(cat)) +
     '</div><h3 id="nar-pickobj">Wofür?</h3></div><div class="settings-dialog-body"><button type="button" class="add" data-new-obj>＋ Neu anlegen</button>' +
     objs
       .map(
@@ -5550,7 +5725,7 @@ function pickObject(cat) {
           esc(
             [e.objType, e.owner, (e.docs || []).length ? e.docs.length + " Unterlagen" : ""]
               .filter(Boolean)
-              .join(" · ") || cat,
+              .join(" · ") || categoryName(cat),
           ) +
           "</small></div></button>",
       )
@@ -5596,7 +5771,7 @@ function pickCategory() {
           '"><span class="ic">' +
           icon(T[c].i) +
           "</span><b>" +
-          esc(c) +
+          esc(categoryName(c)) +
           "</b></button>",
       )
       .join("") +
