@@ -246,6 +246,123 @@ h2 {
   margin: 12px 0;
   box-shadow: var(--sd);
 }
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 16px;
+}
+.detail-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.detail-title h2 {
+  margin: 2px 0;
+  font-size: 21px;
+  overflow-wrap: anywhere;
+}
+.detail-title small,
+.detail-doc small,
+.rental-object small,
+.finance-row small {
+  display: block;
+  color: var(--mu);
+  font-size: 12px;
+}
+.detail-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ln);
+}
+.detail-line:last-child {
+  border-bottom: 0;
+}
+.detail-line > :last-child {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.detail-total {
+  font-weight: 700;
+}
+.detail-note {
+  overflow-wrap: anywhere;
+}
+.detail-doc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--ln);
+  background: transparent;
+  text-align: left;
+}
+.detail-doc span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rental-enabled {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 4px 0 12px;
+}
+.rental-enabled input {
+  width: 20px;
+  height: 20px;
+}
+.month-pick {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  border: 1px solid var(--ln);
+  border-radius: 12px;
+  background: var(--sf);
+}
+.month-pick input {
+  border: 1px solid var(--ln);
+  border-radius: 8px;
+  padding: 7px;
+  background: var(--sf);
+  color: var(--tx);
+}
+.rental-object {
+  width: 100%;
+  padding: 0 0 9px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.rental-object b {
+  display: block;
+}
+.finance-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.finance-row > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.finance-income {
+  color: var(--ok);
+  white-space: nowrap;
+}
+.finance-expense {
+  color: var(--rd);
+  white-space: nowrap;
+}
 .note {
   background: #faf7f0;
   border-color: #e8dcc5;
@@ -2490,18 +2607,15 @@ html[data-theme="dark"] .ov {
   margin: 5px 0 4px;
   font-size: 24px;
 }
-.area-picker-card > p,
-.area-picker-card > small {
-  color: var(--mu);
-}
 .area-options {
   display: grid;
   gap: 10px;
   margin: 20px 0 14px;
 }
 .area-option {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   padding: 15px 16px;
   text-align: left;
@@ -2518,9 +2632,11 @@ html[data-theme="dark"] .ov {
   color: var(--tx);
   font-size: 16px;
 }
-.area-option span {
-  color: var(--mu);
-  font-size: 13px;
+.area-option .ui-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  color: var(--tx);
 }
 .area-cancel {
   width: 100%;

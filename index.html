@@ -56,6 +56,9 @@
         </div>
         <div id="list"></div>
       </section>
+      <section id="v-object" class="hide"></section>
+      <section id="v-rentals" class="hide"></section>
+      <section id="v-finances" class="hide"></section>
       <section id="v-docs" class="hide">
         <input type="search" id="qd" placeholder="Dokumente durchsuchen" /><select
           id="docCat"
@@ -162,6 +165,22 @@
           ><select id="fown"></select
         ></label>
         <div id="fx"></div>
+        <div id="rentalFields" class="hide">
+          <h4>Vermietung</h4>
+          <label class="rental-enabled"><input type="checkbox" id="rentalActive" /> Dieses Objekt ist vermietet</label>
+          <div id="rentalDetails" class="hide">
+            <label class="f"><span>Mieter/in</span><input id="rentalTenant" autocomplete="off" /></label>
+            <div class="two">
+              <label class="f"><span>Kaltmiete pro Monat (€)</span><input id="rentalRent" type="number" min="0" step="0.01" /></label>
+              <label class="f"><span>Laufende Kosten pro Monat (€)</span><input id="rentalExpenses" type="number" min="0" step="0.01" /></label>
+            </div>
+            <div class="two">
+              <label class="f"><span>Kaution (€)</span><input id="rentalDeposit" type="number" min="0" step="0.01" /></label>
+              <label class="f"><span>Mietbeginn</span><input id="rentalLeaseStart" type="date" /></label>
+            </div>
+            <label class="f"><span>Mietende (optional)</span><input id="rentalLeaseEnd" type="date" /></label>
+          </div>
+        </div>
         <h4>Unterlagen</h4>
         <div id="docs"></div>
         <input type="file" id="fu" multiple hidden /><input type="file" id="fru" hidden /><input
@@ -378,6 +397,30 @@
       </div>
     </div>
 
+    <div class="ov" id="financeOv" role="dialog" aria-modal="true" aria-labelledby="financeTitle">
+      <div class="sh">
+        <h3 id="financeTitle">Finanzbuchung</h3>
+        <label class="f"><span>Bezeichnung</span><input id="financeDescription" maxlength="120" /></label>
+        <div class="two">
+          <label class="f"><span>Art</span><select id="financeType"><option value="expense">Ausgabe</option><option value="income">Einnahme</option></select></label>
+          <label class="f"><span>Betrag (€)</span><input id="financeAmount" type="number" min="0.01" step="0.01" required /></label>
+        </div>
+        <div class="two">
+          <label class="f"><span>Datum</span><input id="financeDate" type="date" required /></label>
+          <label class="f"><span>Kategorie</span><select id="financeCategory">
+            <option>Wohnen</option><option>Lebensmittel</option><option>Mobilität</option><option>Gesundheit</option>
+            <option>Verträge</option><option>Freizeit</option><option>Gehalt</option><option>Sonstiges</option>
+          </select></label>
+        </div>
+        <label class="f"><span>Notiz (optional)</span><textarea id="financeNote" rows="2"></textarea></label>
+        <div class="bar">
+          <button class="btn" id="financeSave">Speichern</button>
+          <button class="btn s" id="financeCancel">Abbrechen</button>
+          <button class="btn x hide" id="financeDelete">Löschen</button>
+        </div>
+      </div>
+    </div>
+
     <div class="doc-preview" id="docPreview" role="dialog" aria-modal="true" aria-label="Dokumentvorschau">
       <div class="preview-panel">
         <div class="preview-head">
@@ -400,19 +443,24 @@
 
     <div id="areaPicker" class="area-picker" role="dialog" aria-modal="true" aria-labelledby="areaPickerTitle">
       <div class="area-picker-card">
-        <span class="settings-dialog-kicker">Privater Datenbereich</span>
         <h2 id="areaPickerTitle">Bereich auswählen</h2>
-        <p>Die Inhalte, Einstellungen und Google-Drive-Ablagen der Bereiche bleiben getrennt.</p>
-        <small>Die Auswahl ist kein Zugriffsschutz. Google Drive und dessen Ordnerfreigaben entscheiden über den tatsächlichen Zugriff.</small>
         <div class="area-options">
           <button type="button" class="area-option" data-area-select="home">
-            <b>NAR Home</b><span>Haushalt und private Verträge</span>
+            <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+              <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+            <b>NAR Home</b>
           </button>
           <button type="button" class="area-option" data-area-select="family">
-            <b>NAR Family</b><span>Familienverwaltung und gemeinsame Dokumente</span>
+            <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 21a8 8 0 0 0-16 0" />
+              <circle cx="10" cy="8" r="5" />
+              <path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3" />
+            </svg>
+            <b>NAR Family</b>
           </button>
         </div>
-        <small id="areaCurrent"></small>
         <button type="button" class="btn s area-cancel hide" id="areaCancel">Zurück</button>
       </div>
     </div>
