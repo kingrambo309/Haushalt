@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#202b3a" />
+    <title>NAR Home</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script>
+      try {
+        var s = localStorage.getItem("hv_theme") || "auto";
+        document.documentElement.dataset.theme =
+          s === "dark" || (s === "auto" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <header>
+      <div class="brand-mark">N</div>
+      <div class="brand-copy">
+        <h1>NAR <span>Home</span></h1>
+        <small>YOUR HOME. UNDER CONTROL.</small>
+      </div>
+      <button type="button" id="themeToggle" class="theme-toggle" aria-label="Dunkelmodus einschalten"></button>
+      <button type="button" id="st" title="Nicht synchronisiert" aria-label="Status: Nicht synchronisiert">
+        <span class="sr">Nicht synchronisiert</span>
+      </button>
+    </header>
+    <main>
+      <section id="v-home"></section>
+      <section id="v-list" class="hide">
+        <input type="search" id="q" placeholder="Einträge durchsuchen" />
+        <div id="chips"></div>
+        <div class="list-tools">
+          <select id="po" aria-label="Nach Person filtern">
+            <option value="">Alle Personen</option>
+          </select>
+          <select id="so" aria-label="Sortierung">
+            <option value="n">Name A–Z</option>
+            <option value="t">Neueste zuerst</option>
+            <option value="d">Nächste Frist</option>
+          </select>
+        </div>
+        <div id="list"></div>
+      </section>
+      <section id="v-docs" class="hide">
+        <input type="search" id="qd" placeholder="Dokumente durchsuchen" /><select
+          id="docCat"
+          style="
+            width: 100%;
+            margin-top: 9px;
+            padding: 12px;
+            border: 1px solid #dedbd4;
+            border-radius: 11px;
+            background: #fff;
+          "
+        >
+          <option value="Alle">Alle Kategorien</option>
+        </select>
+        <div id="dlist" style="margin-top: 12px"></div>
+      </section>
+      <section id="v-stats" class="hide"></section>
+      <section id="v-calendar" class="hide"></section>
+      <section id="v-settings" class="hide"></section>
+    </main>
+
+    <nav>
+      <button data-t="home" class="on">
+        <span
+          ><svg class="ui-icon" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7" /></svg></span
+        >Übersicht
+      </button>
+      <button data-t="list">
+        <span
+          ><svg class="ui-icon" viewBox="0 0 24 24">
+            <path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></svg></span
+        >Einträge
+      </button>
+      <button data-action="new" class="nav-add">
+        <span
+          ><svg class="ui-icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span
+        >Neu
+      </button>
+      <button data-t="calendar">
+        <span
+          ><svg class="ui-icon" viewBox="0 0 24 24">
+            <rect x="3" y="5" width="18" height="16" rx="2" />
+            <path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" /></svg></span
+        >Kalender
+      </button>
+      <button data-action="more">
+        <span
+          ><svg class="ui-icon" viewBox="0 0 24 24" style="stroke-width: 3">
+            <path d="M5 12h.01M12 12h.01M19 12h.01" /></svg></span
+        >Mehr
+      </button>
+    </nav>
+
+    <div class="ov" id="ov" role="dialog" aria-modal="true" aria-labelledby="sht">
+      <div class="sh" tabindex="-1">
+        <h3 id="sht">Eintrag</h3>
+        <h4>Grunddaten</h4>
+        <label class="f"
+          ><span>Kategorie</span
+          ><select id="fc"></select
+        ></label>
+        <label class="f" id="fobjWrap"
+          ><span>Art</span
+          ><select id="fobj"></select
+        ></label>
+        <label class="f"
+          ><span>Bezeichnung</span><input id="ft" placeholder="z. B. Golf 7, Wohnung Musterstr. 5, Handy Ich"
+        /></label>
+        <label class="f"
+          ><span>Gehört zu</span
+          ><select id="fown"></select
+        ></label>
+        <div id="fx"></div>
+        <h4>Unterlagen</h4>
+        <div id="docs"></div>
+        <input type="file" id="fu" multiple hidden /><input type="file" id="fru" hidden /><input
+          type="file"
+          id="fcam"
+          accept="image/*"
+          capture="environment"
+          hidden
+        />
+        <div class="doc-add-box">
+          <label class="f"
+            ><span>Neues Dokument ablegen unter</span
+            ><select id="docSub"></select
+          ></label>
+          <div class="doc-add">
+            <button class="btn s" id="fub" type="button">📎 Datei wählen</button
+            ><button class="btn s" id="fcamb" type="button">📷 Foto aufnehmen</button>
+          </div>
+        </div>
+        <div id="contractFields" class="hide">
+          <h4>Vertragslaufzeit & Kündigung</h4>
+          <div class="two">
+            <label class="f"><span>Vertragsbeginn</span><input type="date" id="cStart" /></label>
+            <label class="f"
+              ><span>Laufzeit in Monaten</span><input type="number" id="cTerm" min="0" step="1" placeholder="z. B. 24"
+            /></label>
+          </div>
+          <div class="two">
+            <label class="f"
+              ><span>Kündigungsfrist in Monaten</span
+              ><input type="number" id="cNotice" min="0" step="1" placeholder="z. B. 3"
+            /></label>
+            <label class="f"><span>Spätester Kündigungstermin</span><input type="date" id="cCancelBy" /></label>
+          </div>
+          <div class="two">
+            <label class="f"
+              ><span>Verlängerung danach um (Monate)</span
+              ><input type="number" id="cRenew" min="0" step="1" placeholder="z. B. 1 oder 12"
+            /></label>
+            <label class="f"
+              ><span>Erinnerungen</span
+              ><select id="cReminders">
+                <option value="90,30,7">90, 30 und 7 Tage vorher</option>
+                <option value="30,7">30 und 7 Tage vorher</option>
+                <option value="7">7 Tage vorher</option>
+                <option value="none">Keine</option>
+              </select></label
+            >
+          </div>
+          <p class="mu" id="cCalcHint" style="font-size: 11px; margin: 0 0 12px">
+            Der Kündigungstermin wird aus Laufzeit und Kündigungsfrist vorgeschlagen. Du kannst ihn jederzeit
+            überschreiben.
+          </p>
+          <p class="mu" style="font-size: 11px; margin: 0 0 12px">
+            Verlängerung: Verträge ab dem 01.03.2022 verlängern sich nach der Mindestlaufzeit meist monatlich (1),
+            ältere Verträge oft um 12 Monate. 0 bedeutet: Der Vertrag endet. Ist der Kündigungstermin verstrichen,
+            rechnet die App automatisch den nächsten aus.
+          </p>
+        </div>
+        <h4>Kosten (optional)</h4>
+        <div id="costList"></div>
+        <button class="add" id="addc">+ Kosten hinzufügen</button>
+        <div id="priceHist" class="price-hist"></div>
+        <h4>Fristen (optional)</h4>
+        <div id="dlList"></div>
+        <button class="add" id="addd">+ Frist hinzufügen</button>
+        <h4>Notizen</h4>
+        <label class="f"><textarea id="fn" rows="3" placeholder="Ansprechpartner, Hinweise …"></textarea></label>
+        <label style="display: flex; gap: 8px; align-items: center; margin-top: 16px"
+          ><input type="checkbox" id="ff" style="width: 20px; height: 20px" /> Als wichtig markieren ⭐</label
+        >
+        <div class="bar">
+          <button class="btn" id="fs">Speichern</button><button class="btn s" id="fx2">Abbrechen</button
+          ><button class="btn x" id="fdel">Löschen</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ov" id="ov2" role="dialog" aria-modal="true" aria-labelledby="ov2-title">
+      <div class="sh">
+        <h3 id="ov2-title">Google Drive</h3>
+        <p class="settings-note">
+          Die App speichert alles im Ordner „Haushalt“ in deinem Google Drive und benötigt dafür Zugriff auf Drive. Der
+          volle Zugriff ist nötig, damit beide Konten auch die Dokumente sehen, die das jeweils andere Konto hochgeladen
+          hat. Die App liest und ändert nur Dateien im Ordner „Haushalt“.
+        </p>
+        <label class="f"
+          ><span>Dieses Konto ist …</span
+          ><select id="role">
+            <option value="owner">Hauptkonto (legt den Ordner „Haushalt“ an)</option>
+            <option value="partner">Partner (nutzt den freigegebenen Ordner)</option>
+          </select></label
+        >
+        <details class="guide">
+          <summary>So verbindet ihr NAR Home – Schritt für Schritt</summary>
+          <ol>
+            <li>
+              <b>Hauptkonto:</b> oben „Hauptkonto“ wählen, auf „Speichern und verbinden“ tippen und mit Google anmelden.
+              Der Ordner „Haushalt“ wird automatisch in deinem Drive angelegt.
+            </li>
+            <li>
+              Danach erscheint hier „Mit Partner teilen“: E-Mail-Adresse des Partners eintragen und „Ordner freigeben“
+              tippen.
+            </li>
+            <li>
+              <b>Partner-Gerät:</b> NAR Home öffnen, hier „Partner“ wählen, „Speichern und verbinden“ tippen und mit dem
+              eigenen Google-Konto anmelden.
+            </li>
+            <li>Fertig – Einträge, Termine und Dokumente werden ab jetzt automatisch abgeglichen.</li>
+          </ol>
+        </details>
+        <details class="guide">
+          <summary>Erweitert: eigene Google-Client-ID verwenden</summary>
+          <p class="settings-note">
+            NAR Home bringt eine Client-ID mit. Nur wenn du NAR Home unter einer eigenen Adresse betreibst, brauchst du
+            eine eigene:
+          </p>
+          <ol>
+            <li>console.cloud.google.com öffnen und ein Projekt anlegen.</li>
+            <li>Unter „APIs &amp; Dienste → Bibliothek“ die <b>Google Drive API</b> aktivieren.</li>
+            <li>„OAuth-Zustimmungsbildschirm“ einrichten (Typ „Extern“) und euch beide als Testnutzer eintragen.</li>
+            <li>
+              „Anmeldedaten → Anmeldedaten erstellen → OAuth-Client-ID“, Typ <b>Webanwendung</b>. Bei „Autorisierte
+              JavaScript-Quellen“ die Adresse eintragen, unter der NAR Home läuft.
+            </li>
+            <li>Die angezeigte Client-ID kopieren und hier einfügen.</li>
+          </ol>
+          <label class="f"
+            ><span>Eigene Client-ID (leer = eingebaute verwenden)</span
+            ><input id="cid" placeholder="123456-abc.apps.googleusercontent.com" autocapitalize="off" autocorrect="off"
+          /></label>
+        </details>
+        <div id="conflictInfo" class="card hide"></div>
+        <div id="shr" class="card hide">
+          <b>Mit Partner teilen</b
+          ><label class="f" style="margin-top: 8px"
+            ><input id="shm" type="email" placeholder="E-Mail-Adresse des Partners" /></label
+          ><button class="btn s w" id="shb">Ordner freigeben</button>
+        </div>
+        <div class="bar">
+          <button class="btn" id="cidSave">Speichern und verbinden</button
+          ><button class="btn s" id="cidX">Schließen</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ov" id="eventOv" role="dialog" aria-modal="true" aria-labelledby="eventTitle">
+      <div class="sh">
+        <h3 id="eventTitle">Neuer Termin</h3>
+        <label class="f"><span>Titel</span><input id="evName" placeholder="z. B. Familienfeier" /></label>
+        <div class="two">
+          <label class="f"><span>Datum</span><input id="evDate" type="date" /></label>
+          <label class="f"><span>Uhrzeit</span><input id="evTime" type="time" /></label>
+        </div>
+        <label class="f"
+          ><span>Terminart</span
+          ><select id="evType">
+            <option>Familie</option>
+            <option>Persönlich</option>
+            <option>Haushalt</option>
+            <option>Frist</option>
+            <option>Sonstiges</option>
+          </select></label
+        >
+        <label class="f"
+          ><span>Beschreibung</span><textarea id="evNote" rows="2" placeholder="Optional"></textarea>
+        </label>
+        <div class="f">
+          <span>Anhänge (optional)</span>
+          <div id="evFiles"></div>
+          <div class="doc-add">
+            <button type="button" class="btn s" id="evFileBtn">📎 Datei anhängen</button
+            ><button type="button" class="btn s" id="evCamBtn">📷 Foto aufnehmen</button>
+          </div>
+          <input type="file" id="evFile" multiple hidden /><input
+            type="file"
+            id="evCam"
+            accept="image/*"
+            capture="environment"
+            hidden
+          />
+        </div>
+        <div class="two">
+          <label class="f"
+            ><span>Wiederholung</span
+            ><select id="evRepeat">
+              <option value="none">Keine</option>
+              <option value="yearly">Jährlich</option>
+              <option value="monthly">Monatlich</option>
+              <option value="weekly">Wöchentlich</option>
+            </select></label
+          >
+          <label class="f"
+            ><span>Erinnerung</span
+            ><select id="evReminder">
+              <option value="0">Keine</option>
+              <option value="10">10 Minuten vorher</option>
+              <option value="60">1 Stunde vorher</option>
+              <option value="1440">1 Tag vorher</option>
+              <option value="10080">1 Woche vorher</option>
+            </select></label
+          >
+        </div>
+        <p class="mu" style="font-size: 11px; margin: -4px 0 12px">
+          Erinnerungen erscheinen in der Übersicht und, wenn erlaubt, als Benachrichtigung, solange NAR Home geöffnet
+          ist. Ohne Uhrzeit gilt 9:00 Uhr.
+        </p>
+        <div class="bar">
+          <button class="btn" id="evSave">Speichern</button><button class="btn s" id="evCancel">Abbrechen</button
+          ><button class="btn x" id="evDelete">Löschen</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="doc-preview" id="docPreview" role="dialog" aria-modal="true" aria-label="Dokumentvorschau">
+      <div class="preview-panel">
+        <div class="preview-head">
+          <div class="preview-name" id="previewName">Dokument</div>
+          <div class="pdf-zoom hide" id="pdfZoom" role="group" aria-label="Zoom">
+            <button type="button" class="ib" data-zoom="-1" aria-label="Verkleinern">−</button
+            ><button type="button" class="ib pdf-zoom-val" data-zoom="0" aria-label="Auf Breite anpassen">100 %</button
+            ><button type="button" class="ib" data-zoom="1" aria-label="Vergrößern">+</button>
+          </div>
+          <button class="ib" id="previewClose" aria-label="Vorschau schließen">✕</button>
+        </div>
+        <div class="preview-body" id="previewBody"><div class="preview-msg">Dokument wird geladen …</div></div>
+        <div class="preview-actions">
+          <button class="btn s" id="previewClose2">Schließen</button
+          ><a class="btn s" id="previewDrive" target="_blank" rel="noopener">In Drive öffnen</a
+          ><button class="btn" id="previewDownload">⬇ Herunterladen</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="app.js"></script>
+  </body>
+</html>
