@@ -1,10 +1,34 @@
 const $ = (s) => document.querySelector(s);
 
 // Version shown under Einstellungen → Versionsinfo. Raise it with every release (also renews the offline cache).
-const APP_VERSION = "14.3",
+const APP_VERSION = "14.7",
   APP_DATE = "2026-10-31",
   DATA_FORMAT = 2;
 const CHANGELOG = [
+  {
+    v: "14.7",
+    date: "2026-10-31",
+    items: ["Bereichsauswahl mit Lucide-Symbolen house und users-round, ohne Beschreibungstexte"],
+  },
+  {
+    v: "14.6",
+    date: "2026-10-31",
+    items: ["Eigenes Häkchen-Symbol für erledigten Handlungsbedarf und neues Fahrzeug-Symbol in Seitenansicht"],
+  },
+  {
+    v: "14.5",
+    date: "2026-10-31",
+    items: ["Automatische Synchronisation ohne Ladeanzeige; manueller Abgleich über die Statusampel"],
+  },
+  {
+    v: "14.4",
+    date: "2026-10-31",
+    items: [
+      "Objekt-Detailseiten mit Stammdaten, Kosten, Fristen und Unterlagen ergänzt",
+      "Vermietungsübersicht mit Mietzeiträumen und monatlicher Zahlungserfassung ergänzt",
+      "Manuelles Einnahmen- und Ausgabenbuch mit Monatsauswertung ergänzt",
+    ],
+  },
   {
     v: "14.3",
     date: "2026-10-31",
@@ -59,7 +83,7 @@ const ICONS = {
   "file-text":
     '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>',
   "car-front":
-    '<path d="m5 17-1 2v2h2l1-2h10l1 2h2v-2l-1-2"/><path d="m5 17 1-7 2-5h8l2 5 1 7"/><path d="M5 13h14M8 17h.01M16 17h.01"/>',
+    '<path d="m5 11 3-5h7l4 5 3 2v4h-3M5 17H2v-5l3-1h14M9 17h6M12 6v5"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>',
   house: '<path d="m3 10 9-7 9 7"/><path d="M5 9v12h14V9M9 21v-7h6v7"/>',
   "receipt-text": '<path d="M4 2v20l4-2 4 2 4-2 4 2V2l-4 2-4-2-4 2z"/><path d="M8 9h8M8 13h8M8 17h5"/>',
   "heart-pulse":
@@ -76,6 +100,7 @@ const ICONS = {
     '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  "circle-check": '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
   cloud: '<path d="M20 16.2A4.5 4.5 0 0 0 18.5 7.5 6 6 0 0 0 7 8.7 4 4 0 0 0 7 17h12"/>',
   "cloud-upload": '<path d="M20 16.2A4.5 4.5 0 0 0 18.5 7.5 6 6 0 0 0 7 8.7 4 4 0 0 0 7 17h5"/><path d="m10 14 3-3 3 3M13 11v9"/>',
@@ -225,6 +250,7 @@ let data = JSON.parse(localStorage.getItem(areaStorageKey("data")) || "null") ||
 function normalizeData() {
   data.entries = data.entries || [];
   data.events = data.events || [];
+  data.financeTransactions = data.financeTransactions || [];
   data.deletedEvents = data.deletedEvents || [];
   data.trash = data.trash || [];
   data.purgedTrash = data.purgedTrash || [];
@@ -326,6 +352,11 @@ let token = null,
   qd = "",
   so = "n",
   cur = null,
+  detailEntryId = null,
+  detailPreviousTab = "list",
+  editingFinanceId = null,
+  financeMonth = dateKey(new Date()).slice(0, 7),
+  rentalMonth = dateKey(new Date()).slice(0, 7),
   isNew = false,
   timer = null,
   tc = null,
@@ -747,6 +778,7 @@ function merge(a, b) {
     entries: [...m.values()],
     del: [...del],
     events: mergedEvents,
+    financeTransactions: mergeSimple(a.financeTransactions || [], b.financeTransactions || []),
     deletedEvents,
     settings: (sb.upd || 0) > (sa.upd || 0) ? sb : sa,
     purgedTrash: [...purgedTrash],
@@ -782,11 +814,13 @@ function addToTrash(t) {
 function needsPush(remote, local) {
   const rEntries = new Map((remote.entries || []).map((e) => [e.id, e.upd || 0])),
     rEvents = new Map((remote.events || []).map((e) => [e.id, e.updatedAt || 0])),
+    rFinance = new Map((remote.financeTransactions || []).map((t) => [t.id, t.updatedAt || 0])),
     rDel = new Set(remote.del || []),
     rDelEv = new Set(remote.deletedEvents || []);
   return (
     local.entries.some((e) => !rEntries.has(e.id) || rEntries.get(e.id) < (e.upd || 0)) ||
     (local.events || []).some((e) => !rEvents.has(e.id) || rEvents.get(e.id) < (e.updatedAt || 0)) ||
+    (local.financeTransactions || []).some((t) => !rFinance.has(t.id) || rFinance.get(t.id) < (t.updatedAt || 0)) ||
     (local.del || []).some((id) => !rDel.has(id)) ||
     (local.deletedEvents || []).some((id) => !rDelEv.has(id)) ||
     (local.purgedTrash || []).some((key) => !(remote.purgedTrash || []).includes(key)) ||
@@ -823,30 +857,21 @@ async function backgroundSync() {
     if (!authExpired) markAuthExpired();
     return;
   }
-  return withLoading(
-    {
-      title: "Synchronisiere Daten",
-      description: "Änderungen von anderen Geräten werden übernommen.",
-      iconName: "replace",
-    },
-    async () => {
-      syncing = true;
-      let push = false;
-      try {
-        push = await pullRemote();
-      } catch (e) {
-        recordDeveloperLog("error", "sync", "Synchronisation fehlgeschlagen.");
-        if (e.message === "NEEDS_AUTH") markAuthExpired();
-        else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
-      } finally {
-        syncing = false;
-      }
-      if (push) {
-        clearTimeout(timer);
-        timer = setTimeout(save, 300);
-      }
-    },
-  );
+  syncing = true;
+  let push = false;
+  try {
+    push = await pullRemote();
+  } catch (e) {
+    recordDeveloperLog("error", "sync", "Synchronisation fehlgeschlagen.");
+    if (e.message === "NEEDS_AUTH") markAuthExpired();
+    else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
+  } finally {
+    syncing = false;
+  }
+  if (push) {
+    clearTimeout(timer);
+    timer = setTimeout(save, 300);
+  }
 }
 async function connect() {
   return withLoading(
@@ -888,42 +913,44 @@ async function connect() {
     },
   );
 }
-async function save() {
+async function save({ manual = false } = {}) {
+  const operation = async () => {
+    if (!folderId) {
+      setSt("Nicht verbunden – Änderungen nur auf diesem Gerät gespeichert");
+      return false;
+    }
+    if (syncing) {
+      clearTimeout(timer);
+      timer = setTimeout(() => save({ manual }), 500);
+      return false;
+    }
+    syncing = true;
+    try {
+      const push = await pullRemote();
+      if (push || !fileId) {
+        const r = await up("daten.json", new Blob([JSON.stringify(data)], { type: "application/json" }), fileId);
+        fileId = (await r.json()).id;
+      }
+      rememberSyncBase();
+      setSt("Synchronisiert · " + who, "ok");
+      return true;
+    } catch (e) {
+      recordDeveloperLog("error", "sync", "Synchronisation fehlgeschlagen.");
+      if (e.message === "NEEDS_AUTH") markAuthExpired();
+      else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
+      return false;
+    } finally {
+      syncing = false;
+    }
+  };
+  if (!manual) return operation();
   return withLoading(
     {
       title: "Synchronisiere Daten",
-      description: "Änderungen werden sicher mit Google Drive abgeglichen.",
+      description: "Änderungen werden mit Google Drive abgeglichen.",
       iconName: "replace",
     },
-    async () => {
-      if (!folderId) {
-        setSt("Nicht verbunden – Änderungen nur auf diesem Gerät gespeichert");
-        return false;
-      }
-      if (syncing) {
-        clearTimeout(timer);
-        timer = setTimeout(save, 500);
-        return false;
-      }
-      syncing = true;
-      try {
-        const push = await pullRemote();
-        if (push || !fileId) {
-          const r = await up("daten.json", new Blob([JSON.stringify(data)], { type: "application/json" }), fileId);
-          fileId = (await r.json()).id;
-        }
-        rememberSyncBase();
-        setSt("Synchronisiert · " + who, "ok");
-        return true;
-      } catch (e) {
-        recordDeveloperLog("error", "sync", "Synchronisation fehlgeschlagen.");
-        if (e.message === "NEEDS_AUTH") markAuthExpired();
-        else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
-        return false;
-      } finally {
-        syncing = false;
-      }
-    },
+    operation,
   );
 }
 function updateAreaBrand() {
@@ -934,7 +961,6 @@ function updateAreaBrand() {
 function openAreaPicker(canCancel = true) {
   $("#areaCancel").classList.toggle("hide", !canCancel);
   $("#areaPicker").classList.remove("hide");
-  $("#areaCurrent").textContent = "Aktuell: " + areaLabel();
 }
 async function selectArea(nextArea) {
   if (!["home", "family"].includes(nextArea)) return;
@@ -1366,7 +1392,7 @@ function renderHome() {
             " weitere unter „Einträge“ (Sortierung „Nächste Frist“)</p>"
           : "")
       : '<div class="card" style="display:flex;gap:12px;align-items:center;margin-top:0"><span class="ic" style="color:var(--ok)">' +
-        icon("shield-check") +
+        icon("circle-check") +
         '</span><div class="m"><b>Alles im grünen Bereich</b><small>Keine Frist in den nächsten 30 Tagen.</small></div></div>';
     h +=
       '<div class="hero" style="margin-top:20px">' +
@@ -1473,6 +1499,8 @@ function openMore() {
   const items = [
     ["docs", "file", "Dokumente", "Alle Dateien durchsuchen und öffnen"],
     ["stats", "chart", "Statistik", "Kosten, Fristen und Spar-Hinweise"],
+    ["rentals", "house", "Vermietung", "Mietobjekte und monatliche Zahlungseingänge"],
+    ["finances", "receipt-text", "Finanzen", "Manuelles Einnahmen- und Ausgabenbuch"],
     ["emergency", "lifebuoy", "Notfallmappe", "Alle wichtigen Daten als PDF"],
     ["settings", "settings", "Einstellungen", "Kategorien, Backup, Darstellung und Google Drive"],
   ];
@@ -1635,6 +1663,90 @@ function renderDocs2() {
         );
       })
       .join("") || '<p class="mu">' + (L.length ? "Keine Treffer." : "Noch keine Dokumente.") + "</p>";
+}
+function renderObjectDetail() {
+  const e = data.entries.find((x) => x.id === detailEntryId);
+  if (!e) {
+    navigateTo(detailPreviousTab, { push: false });
+    return;
+  }
+  const metadata = Object.entries(e.x || {}).filter(([, value]) => String(value || "").trim());
+  const costs = costItems(e).filter((c) => +c.amount > 0);
+  const docs = e.docs || [];
+  $("#v-object").innerHTML =
+    '<div class="detail-head"><button type="button" class="btn s" data-detail-back>← Zurück</button><button type="button" class="btn" data-detail-edit>Bearbeiten</button></div>' +
+    '<div class="detail-title"><span class="ic" style="--c:' + esc(tp(e).c) + '">' + icon(tp(e).i) + '</span><div><small>' +
+    esc(e.cat) + (e.objType ? " · " + esc(e.objType) : "") + '</small><h2>' + esc(e.title) + '</h2>' +
+    (e.owner ? '<p class="mu">' + esc(e.owner) + "</p>" : "") + "</div></div>" +
+    '<div class="card"><h3>Objektdaten</h3>' +
+    (metadata.length ? metadata.map(([label, value]) => '<div class="detail-line"><span>' + esc(label) + "</span><b>" + esc(value) + "</b></div>").join("") : '<p class="mu">Keine zusätzlichen Angaben.</p>') +
+    (e.note ? '<h4>Notizen</h4><p class="detail-note">' + esc(e.note).replace(/\n/g, "<br>") + "</p>" : "") + "</div>" +
+    '<div class="card"><h3>Kosten</h3>' +
+    (costs.length ? costs.map((c) => '<div class="detail-line"><span>' + esc(c.label || "Kosten") + " · " + esc(c.iv || "monatlich") + "</span><b>" + fmt(+c.amount) + "</b></div>").join("") +
+      '<div class="detail-line detail-total"><span>Regelmäßige Kosten</span><b>' + fmt(mo1(e)) + " / Monat</b></div>" : '<p class="mu">Keine Kosten hinterlegt.</p>') + "</div>" +
+    '<div class="card"><h3>Fristen</h3>' +
+    (entryDeadlines(e).length ? entryDeadlines(e).map((d) => '<div class="detail-line"><span>' + esc(d.label || "Frist") + "</span><b>" + esc(fmtD(d.date)) + "</b></div>").join("") : '<p class="mu">Keine Fristen hinterlegt.</p>') + "</div>" +
+    (e.rental && e.rental.active ? '<div class="card"><h3>Vermietung</h3><div class="detail-line"><span>Mieter/in</span><b>' + esc(e.rental.tenant || "Nicht angegeben") +
+      '</b></div><div class="detail-line"><span>Kaltmiete</span><b>' + fmt(+e.rental.monthlyRent || 0) + " / Monat</b></div><button type=\"button\" class=\"btn s w\" data-detail-rentals>Zur Vermietungsübersicht</button></div>" : "") +
+    '<div class="card"><h3>Unterlagen <span class="fold-count">' + docs.length + "</span></h3>" +
+    (docs.length ? docs.map((d, i) => '<button type="button" class="detail-doc" data-detail-doc="' + i + '">' + icon(fileIcon(d.name) === "▤" ? "file-text" : "image") +
+      "<span><b>" + esc(d.name) + "</b><small>" + esc(d.subcategory || "Allgemein") + "</small></span></button>").join("") : '<p class="mu">Noch keine Unterlagen.</p>') + "</div>";
+}
+const activeRentals = () => data.entries.filter((e) => e.cat === "Wohnen" && e.rental && e.rental.active);
+function rentalMonthActive(rental, month) {
+  const first = month + "-01";
+  const last = month + "-31";
+  return (!rental.leaseStart || rental.leaseStart <= last) && (!rental.leaseEnd || rental.leaseEnd >= first);
+}
+function renderRentals() {
+  const entries = activeRentals();
+  $("#v-rentals").innerHTML =
+    '<div class="detail-head"><button type="button" class="btn s" data-rent-back>← Zurück</button></div><h2>Vermietung</h2>' +
+    '<p class="mu">Mieteingänge werden je Monat lokal erfasst und mit dem bestehenden Drive-Datensatz synchronisiert.</p>' +
+    '<label class="month-pick">Abrechnungsmonat <input id="rentalMonth" type="month" value="' + esc(rentalMonth) + '"></label>' +
+    (entries.length ? (() => {
+      const active = entries.filter((e) => rentalMonthActive(e.rental, rentalMonth)),
+        rent = active.reduce((s, e) => s + (+e.rental.monthlyRent || 0), 0),
+        costs = active.reduce((s, e) => s + (+e.rental.monthlyExpenses || 0), 0),
+        received = active.reduce((s, e) => s + ((e.rental.payments || {})[rentalMonth]?.paid ? (+((e.rental.payments || {})[rentalMonth].amount) || +e.rental.monthlyRent || 0) : 0), 0),
+        outstanding = rentalMonth <= dateKey(new Date()).slice(0, 7) ? active.reduce((s, e) => s + (!((e.rental.payments || {})[rentalMonth]?.paid) ? (+e.rental.monthlyRent || 0) : 0), 0) : 0;
+      return '<div class="facts"><div><b>' + fmt(rent) + '</b><small>Geplante Kaltmiete</small></div><div><b>' + fmt(received) +
+        '</b><small>Eingegangen</small></div><div><b>' + fmt(outstanding) + '</b><small>Noch offen</small></div><div><b>' + fmt(rent - costs) + '</b><small>Netto geplant</small></div></div>' +
+        '<h3>Objekte</h3>' + active.map((e) => {
+          const rental = e.rental, payment = (rental.payments || {})[rentalMonth], paid = !!(payment && payment.paid),
+            future = rentalMonth > dateKey(new Date()).slice(0, 7), due = rentalMonthActive(rental, rentalMonth);
+          return '<article class="card rental-card"><button type="button" class="rental-object" data-rental-detail="' + esc(e.id) + '"><b>' + esc(e.title) +
+            '</b><small>' + esc((e.x || {})["Objekt / Adresse"] || rental.tenant || "Adresse nicht angegeben") + '</small></button>' +
+            '<div class="detail-line"><span>' + esc(rental.tenant || "Mieter/in nicht angegeben") + '</span><b>' + fmt(+rental.monthlyRent || 0) + ' / Monat</b></div>' +
+            (due ? '<div class="detail-line"><span>' + (paid ? "Eingegangen" : future ? "Noch nicht fällig" : "Noch offen") + '</span><b>' +
+              (paid && payment.paidAt ? esc(fmtD(payment.paidAt)) : "") + '</b></div><button type="button" class="btn s w ' + (paid ? "secondary" : "") +
+              '" data-rent-toggle="' + esc(e.id) + '">' + (paid ? "Eingang zurücknehmen" : "Miete als eingegangen markieren") + "</button>" :
+              '<p class="mu">Für diesen Monat besteht laut Mietzeitraum kein Mietverhältnis.</p>') + '</article>';
+        }).join("");
+    })() : '<div class="card"><b>Noch keine vermieteten Objekte</b><p class="mu">Lege unter „Einträge → Wohnen“ ein Objekt an und aktiviere dort „Dieses Objekt ist vermietet“.</p></div>');
+}
+const visibleTransactions = () => data.financeTransactions.filter((t) => !t.deletedAt && (t.date || "").slice(0, 7) === financeMonth);
+function renderFinances() {
+  const monthTransactions = visibleTransactions(),
+    income = monthTransactions.filter((t) => t.type === "income").reduce((s, t) => s + (+t.amount || 0), 0),
+    expenses = monthTransactions.filter((t) => t.type !== "income").reduce((s, t) => s + (+t.amount || 0), 0),
+    recurring = sum(data.entries),
+    rentals = activeRentals().reduce((s, e) => s + (+e.rental.monthlyRent || 0) - (+e.rental.monthlyExpenses || 0), 0);
+  $("#v-finances").innerHTML =
+    '<div class="detail-head"><button type="button" class="btn s" data-finance-back>← Zurück</button><button type="button" class="btn" data-finance-new>+ Buchung</button></div>' +
+    '<h2>Finanzen</h2><p class="mu">Manuelles Einnahmen- und Ausgabenbuch. Es werden keine Bankkonten verbunden oder Buchungen automatisch importiert.</p>' +
+    '<label class="month-pick">Monat <input id="financeMonth" type="month" value="' + esc(financeMonth) + '"></label>' +
+    '<div class="facts"><div><b>' + fmt(income) + '</b><small>Einnahmen</small></div><div><b>' + fmt(expenses) + '</b><small>Ausgaben</small></div><div><b>' + fmt(income - expenses) + '</b><small>Saldo</small></div></div>' +
+    '<div class="card"><h3>Regelmäßige Planung</h3><div class="detail-line"><span>Erfasste regelmäßige Kosten</span><b>− ' + fmt(recurring) + ' / Monat</b></div>' +
+    '<div class="detail-line"><span>Geplante Mieteinnahmen abzüglich Vermietungskosten</span><b>' + fmt(rentals) + ' / Monat</b></div>' +
+    '<p class="mu">Diese Planung ist getrennt von den tatsächlich erfassten Monatsbuchungen.</p></div><h3>Buchungen · ' +
+    esc(new Date(+financeMonth.slice(0, 4), +financeMonth.slice(5, 7) - 1, 1).toLocaleDateString("de-DE", { month: "long", year: "numeric" })) + "</h3>" +
+    (monthTransactions.length ? monthTransactions.slice().sort((a, b) => b.date.localeCompare(a.date) || (b.updatedAt || 0) - (a.updatedAt || 0)).map((t) =>
+      '<article class="card finance-row"><div><b>' + esc(t.description) + '</b><small>' + esc(fmtD(t.date)) + ' · ' + esc(t.category || "Sonstiges") +
+      (t.note ? " · " + esc(t.note) : "") + '</small></div><b class="' + (t.type === "income" ? "finance-income" : "finance-expense") + '">' +
+      (t.type === "income" ? "+ " : "− ") + fmt(+t.amount || 0) + '</b><button type="button" class="ib" data-finance-edit="' + esc(t.id) + '" aria-label="Buchung bearbeiten">' +
+      icon("pencil") + '</button><button type="button" class="ib" data-finance-remove="' + esc(t.id) + '" aria-label="Buchung löschen">' + icon("trash") + "</button></article>").join("") :
+      '<div class="card mu">Für diesen Monat gibt es noch keine Buchungen.</div>');
 }
 function renderStats() {
   const E = data.entries;
@@ -2806,7 +2918,7 @@ function render() {
     renderDeveloperConsole();
     return;
   }
-  ["home", "list", "docs", "stats", "calendar", "settings"].forEach((t) =>
+  ["home", "list", "object", "rentals", "finances", "docs", "stats", "calendar", "settings"].forEach((t) =>
     $("#v-" + t).classList.toggle("hide", t !== tab),
   );
   document
@@ -2814,12 +2926,16 @@ function render() {
     .forEach((b) =>
       b.classList.toggle(
         "on",
-        b.dataset.t === tab || (b.dataset.action === "more" && ["docs", "stats", "settings"].includes(tab)),
+        b.dataset.t === tab ||
+        (b.dataset.action === "more" && ["docs", "stats", "settings", "rentals", "finances", "object"].includes(tab)),
       ),
     );
   ({
     home: renderHome,
     list: renderList,
+    object: renderObjectDetail,
+    rentals: renderRentals,
+    finances: renderFinances,
     docs: renderDocs2,
     stats: renderStats,
     calendar: renderCalendar,
@@ -3143,6 +3259,15 @@ function openSheet(e, nw) {
   $("#docSub").innerHTML = "";
   renderObjectSelects();
   $("#fx").innerHTML = fieldsHtml();
+  $("#rentalFields").classList.toggle("hide", cur.cat !== "Wohnen");
+  $("#rentalActive").checked = !!(cur.rental && cur.rental.active);
+  $("#rentalDetails").classList.toggle("hide", !$("#rentalActive").checked);
+  $("#rentalTenant").value = cur.rental?.tenant || "";
+  $("#rentalRent").value = cur.rental?.monthlyRent ?? "";
+  $("#rentalExpenses").value = cur.rental?.monthlyExpenses ?? "";
+  $("#rentalDeposit").value = cur.rental?.deposit ?? "";
+  $("#rentalLeaseStart").value = cur.rental?.leaseStart || "";
+  $("#rentalLeaseEnd").value = cur.rental?.leaseEnd || "";
   syncContractFields();
   renderCostFields();
   renderDeadlineFields();
@@ -3778,6 +3903,19 @@ const open = (id) =>
     data.entries.find((x) => x.id === id),
     false,
   );
+function showObjectDetail(id, { push = true } = {}) {
+  if (!data.entries.some((e) => e.id === id)) return;
+  if (tab !== "object") detailPreviousTab = tab;
+  detailEntryId = id;
+  tab = "object";
+  render();
+  if (push) {
+    try {
+      history.pushState({ narHome: true, tab: "object", id }, "", location.href);
+    } catch (e) {}
+  }
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
 
 $("#v-home").addEventListener(
   "toggle",
@@ -3794,7 +3932,7 @@ $("#v-home").onclick = (e) => {
     n = e.target.closest("[data-new]"),
     rm = e.target.closest("[data-dismiss-reminder]");
   if (rm) dismissReminder(rm.dataset.dismissReminder);
-  else if (r) open(r.dataset.id);
+  else if (r) showObjectDetail(r.dataset.id);
   else if (n) newEntry(n.dataset.new);
   else if (g) {
     filter = g.dataset.go;
@@ -3831,8 +3969,151 @@ $("#v-stats").onclick = (e) => {
 };
 $("#list").onclick = (e) => {
   const r = e.target.closest(".row");
-  if (r) open(r.dataset.id);
+  if (r) showObjectDetail(r.dataset.id);
 };
+$("#v-object").onclick = (e) => {
+  if (e.target.closest("[data-detail-back]")) {
+    navigateTo(detailPreviousTab);
+    return;
+  }
+  if (e.target.closest("[data-detail-edit]")) {
+    const entry = data.entries.find((x) => x.id === detailEntryId);
+    if (entry) openSheet(entry, false);
+    return;
+  }
+  if (e.target.closest("[data-detail-rentals]")) {
+    navigateTo("rentals");
+    return;
+  }
+  const documentButton = e.target.closest("[data-detail-doc]");
+  if (documentButton) {
+    const entry = data.entries.find((x) => x.id === detailEntryId),
+      doc = entry && (entry.docs || [])[+documentButton.dataset.detailDoc];
+    if (doc) openDoc(doc);
+  }
+};
+$("#v-rentals").onclick = (e) => {
+  if (e.target.closest("[data-rent-back]")) {
+    navigateTo("stats");
+    return;
+  }
+  const detail = e.target.closest("[data-rental-detail]");
+  if (detail) {
+    showObjectDetail(detail.dataset.rentalDetail);
+    return;
+  }
+  const toggle = e.target.closest("[data-rent-toggle]");
+  if (toggle) {
+    const entry = activeRentals().find((x) => x.id === toggle.dataset.rentToggle);
+    if (!entry || !rentalMonthActive(entry.rental, rentalMonth)) return;
+    entry.rental.payments = entry.rental.payments || {};
+    const previous = entry.rental.payments[rentalMonth];
+    entry.rental.payments[rentalMonth] = previous && previous.paid
+      ? { paid: false, paidAt: "", updatedAt: Date.now() }
+      : { paid: true, paidAt: dateKey(new Date()), amount: +entry.rental.monthlyRent || 0, updatedAt: Date.now() };
+    entry.upd = entry.rental.payments[rentalMonth].updatedAt;
+    entry.updatedAt = entry.upd;
+    entry.updatedBy = who || "Dieses Gerät";
+    saveDataLocal();
+    renderRentals();
+    return;
+  }
+};
+$("#v-rentals").onchange = (e) => {
+  if (e.target.id !== "rentalMonth") return;
+  const month = e.target.value;
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    rentalMonth = month;
+    renderRentals();
+  }
+};
+function openFinanceTransaction(id = "") {
+  editingFinanceId = id || null;
+  const transaction = data.financeTransactions.find((t) => t.id === id);
+  $("#financeTitle").textContent = transaction ? "Buchung bearbeiten" : "Neue Buchung";
+  $("#financeDescription").value = transaction?.description || "";
+  $("#financeType").value = transaction?.type === "income" ? "income" : "expense";
+  $("#financeAmount").value = transaction?.amount ?? "";
+  $("#financeDate").value = transaction?.date || dateKey(new Date());
+  $("#financeCategory").value = transaction?.category || "Sonstiges";
+  $("#financeNote").value = transaction?.note || "";
+  $("#financeDelete").classList.toggle("hide", !transaction);
+  $("#financeOv").classList.add("on");
+  $("#financeDescription").focus();
+}
+$("#v-finances").onclick = async (e) => {
+  if (e.target.closest("[data-finance-back]")) {
+    navigateTo("stats");
+    return;
+  }
+  if (e.target.closest("[data-finance-new]")) {
+    openFinanceTransaction();
+    return;
+  }
+  const edit = e.target.closest("[data-finance-edit]");
+  if (edit) {
+    openFinanceTransaction(edit.dataset.financeEdit);
+    return;
+  }
+  const remove = e.target.closest("[data-finance-remove]");
+  if (remove) {
+    const transaction = data.financeTransactions.find((t) => t.id === remove.dataset.financeRemove);
+    if (transaction && (await showConfirm("Buchung löschen?", "Die Buchung wird aus der Monatsübersicht entfernt.", "Löschen", true))) {
+      transaction.deletedAt = Date.now();
+      transaction.updatedAt = transaction.deletedAt;
+      saveDataLocal();
+      renderFinances();
+    }
+    return;
+  }
+};
+$("#v-finances").onchange = (e) => {
+  if (e.target.id !== "financeMonth") return;
+  const month = e.target.value;
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    financeMonth = month;
+    renderFinances();
+  }
+};
+$("#financeSave").onclick = () => {
+  const description = $("#financeDescription").value.trim(),
+    amount = Number($("#financeAmount").value),
+    date = $("#financeDate").value;
+  if (!description || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    showAlert("Buchung unvollständig", "Bitte gib eine Bezeichnung, ein gültiges Datum und einen Betrag größer als 0 ein.");
+    return;
+  }
+  const now = Date.now(),
+    transaction = data.financeTransactions.find((t) => t.id === editingFinanceId);
+  if (transaction) {
+    Object.assign(transaction, {
+      description, amount, date, type: $("#financeType").value, category: $("#financeCategory").value,
+      note: $("#financeNote").value.trim(), updatedAt: now, updatedBy: who || "Dieses Gerät", deletedAt: 0,
+    });
+  } else {
+    data.financeTransactions.push({
+      id: "fin-" + now + "-" + Math.random().toString(36).slice(2, 8), description, amount, date,
+      type: $("#financeType").value, category: $("#financeCategory").value, note: $("#financeNote").value.trim(),
+      createdAt: now, updatedAt: now, updatedBy: who || "Dieses Gerät",
+    });
+  }
+  financeMonth = date.slice(0, 7);
+  $("#financeOv").classList.remove("on");
+  saveDataLocal();
+  renderFinances();
+};
+$("#financeCancel").onclick = () => $("#financeOv").classList.remove("on");
+$("#financeDelete").onclick = async () => {
+  const transaction = data.financeTransactions.find((t) => t.id === editingFinanceId);
+  if (!transaction) return;
+  if (!(await showConfirm("Buchung löschen?", "Die Buchung wird aus der Monatsübersicht entfernt.", "Löschen", true))) return;
+  transaction.deletedAt = Date.now();
+  transaction.updatedAt = transaction.deletedAt;
+  $("#financeOv").classList.remove("on");
+  saveDataLocal();
+  renderFinances();
+};
+$("#rentalActive").onchange = () => $("#rentalDetails").classList.toggle("hide", !$("#rentalActive").checked);
 $("#dlist").onclick = async (e) => {
   const b = e.target.closest("button");
   if (!b) return;
@@ -3880,6 +4161,7 @@ $("#fc").onchange = () => {
   readDeadlineFields();
   readCostFields();
   cur.cat = $("#fc").value;
+  $("#rentalFields").classList.toggle("hide", cur.cat !== "Wohnen");
   cur.objType = "";
   renderObjectSelects();
   $("#fx").innerHTML = fieldsHtml();
@@ -4128,6 +4410,30 @@ $("#fs").onclick = () => {
   cur.title = $("#ft").value.trim();
   cur.objType = $("#fobj").value;
   cur.owner = $("#fown").value;
+  if (cur.cat === "Wohnen") {
+    const rentalValues = ["#rentalRent", "#rentalExpenses", "#rentalDeposit"].map((selector) => $(selector).value);
+    if (rentalValues.some((value) => value !== "" && (!Number.isFinite(+value) || +value < 0))) {
+      showAlert("Ungültige Mietdaten", "Miete, laufende Kosten und Kaution müssen gültige Beträge ab 0 sein.");
+      return;
+    }
+    const leaseStart = $("#rentalLeaseStart").value,
+      leaseEnd = $("#rentalLeaseEnd").value;
+    if (leaseStart && leaseEnd && leaseEnd < leaseStart) {
+      showAlert("Ungültiger Mietzeitraum", "Das Mietende darf nicht vor dem Mietbeginn liegen.");
+      return;
+    }
+    cur.rental = {
+      ...(cur.rental || {}),
+      active: $("#rentalActive").checked,
+      tenant: $("#rentalTenant").value.trim(),
+      monthlyRent: rentalValues[0] === "" ? 0 : +rentalValues[0],
+      monthlyExpenses: rentalValues[1] === "" ? 0 : +rentalValues[1],
+      deposit: rentalValues[2] === "" ? 0 : +rentalValues[2],
+      leaseStart,
+      leaseEnd,
+      payments: (cur.rental && cur.rental.payments) || {},
+    };
+  }
   cur.costs = cur.costs
     .map((c) => ({ ...c, label: (c.label || "").trim(), amount: String(c.amount ?? "").trim() }))
     .filter((c) => c.amount !== "");
@@ -4337,6 +4643,9 @@ const CONFLICT_FIELDS = [
   ["cancelBy", "Kündigungstermin", (v) => (v ? fmtD(v) : "")],
   ["reminders", "Erinnerungen"],
   ["note", "Notizen"],
+  ["rental", "Vermietung", (v) => v && v.active ? [
+    v.tenant || "", fmt(+v.monthlyRent || 0), fmt(+v.monthlyExpenses || 0), v.leaseStart || "", v.leaseEnd || "",
+  ].join(" · ") : ""],
   ["fav", "Wichtig", (v) => (v ? "Ja" : "Nein")],
 ];
 function conflictRows(a, b) {
@@ -4464,6 +4773,7 @@ document.addEventListener("keydown", (e) => {
   if (document.querySelector(".settings-dialog-backdrop")) return;
   if ($("#docPreview").classList.contains("on")) closePreview();
   else if ($("#eventOv").classList.contains("on")) requestCloseEvent();
+  else if ($("#financeOv").classList.contains("on")) $("#financeCancel").click();
   else if ($("#ov2").classList.contains("on")) $("#cidX").click();
   else if ($("#ov").classList.contains("on")) requestCloseSheet();
 });
@@ -4472,6 +4782,9 @@ $("#ov").onclick = (e) => {
 };
 $("#ov2").onclick = (e) => {
   if (e.target === $("#ov2")) $("#cidX").click();
+};
+$("#financeOv").onclick = (e) => {
+  if (e.target === $("#financeOv")) $("#financeCancel").click();
 };
 $("#cidX").onclick = () => {
   $("#ov2").classList.remove("on");
@@ -4519,6 +4832,9 @@ $("#st").addEventListener("click", () => {
   if (cid() && (authExpired || !folderId)) {
     showToast("Verbinde mit Google Drive …");
     connect();
+  } else if (folderId) {
+    clearTimeout(timer);
+    save({ manual: true });
   } else showToast($("#st").title);
 });
 
@@ -4614,7 +4930,7 @@ document
 
 /* Main navigation + Android/browser back-button handling */
 function navigateTo(nextTab, { push = true } = {}) {
-  if (!["home", "list", "docs", "calendar", "settings", "stats"].includes(nextTab)) return;
+  if (!["home", "list", "object", "rentals", "finances", "docs", "calendar", "settings", "stats"].includes(nextTab)) return;
   if (nextTab === "settings" && tab !== "settings") settingsOpen = [];
   tab = nextTab;
   render();
@@ -4682,6 +4998,7 @@ window.addEventListener("popstate", (e) => {
     else if (modal.classList.contains("settings-dialog-backdrop"))
       (modal.querySelector("[data-cancel]") || modal.querySelector("[data-ok]"))?.click();
     else if (modal.id === "eventOv") requestCloseEvent();
+    else if (modal.id === "financeOv") $("#financeCancel").click();
     else if (modal.id === "ov2") $("#cidX").click();
     else requestCloseSheet();
     try {
@@ -4690,9 +5007,10 @@ window.addEventListener("popstate", (e) => {
     return;
   }
   if (tab !== "home") {
-    navigateTo("home", { push: false });
+    const backTab = tab === "object" ? detailPreviousTab : tab === "rentals" || tab === "finances" ? "stats" : "home";
+    navigateTo(backTab, { push: false });
     try {
-      history.pushState({ narHome: true, tab: "home", guard: true }, "", location.href);
+      history.pushState({ narHome: true, tab: backTab, guard: true }, "", location.href);
     } catch (err) {}
     return;
   }
@@ -4830,6 +5148,7 @@ function backupPayload() {
       deletedEvents: data.deletedEvents || [],
       trash: data.trash || [],
       purgedTrash: data.purgedTrash || [],
+      financeTransactions: data.financeTransactions || [],
     },
   };
 }
@@ -5050,16 +5369,25 @@ async function importBackup(file) {
     entries.forEach((e) => {
       if (e.id.endsWith("-r" + now)) e.upd = now;
     });
-    data = merge({ entries, events, settings: data.settings, del: [], deletedEvents: [] }, data);
+    data = merge({
+      entries, events, financeTransactions: imp.financeTransactions || [], settings: data.settings, del: [], deletedEvents: [],
+    }, data);
   } else {
     const keep = new Set(entries.map((e) => e.id)),
       keepEv = new Set(events.map((e) => e.id));
     entries.forEach((e) => (e.upd = now));
     events.forEach((e) => (e.updatedAt = now));
+    const restoredFinance = (imp.financeTransactions || []).map((t) => ({ ...t, updatedAt: now }));
+    const restoredFinanceIds = new Set(restoredFinance.map((t) => t.id));
     data = {
       ...data,
       entries,
       events,
+      financeTransactions: [
+        ...restoredFinance,
+        ...data.financeTransactions.filter((t) => !restoredFinanceIds.has(t.id))
+          .map((t) => ({ ...t, deletedAt: now, updatedAt: now })),
+      ],
       settings: imp.settings ? { ...imp.settings, upd: now } : data.settings,
       del: [...delSet, ...data.entries.filter((e) => !keep.has(e.id)).map((e) => e.id)],
       deletedEvents: [...delEv, ...data.events.filter((e) => !keepEv.has(e.id)).map((e) => e.id)],
