@@ -44,6 +44,7 @@
       <section id="v-list" class="hide">
         <input type="search" id="q" placeholder="Einträge durchsuchen" />
         <div id="chips"></div>
+        <div id="propertyFilter" class="hide"></div>
         <div class="list-tools">
           <select id="po" aria-label="Nach Person filtern">
             <option value="">Alle Personen</option>
@@ -59,6 +60,7 @@
       <section id="v-object" class="hide"></section>
       <section id="v-rentals" class="hide"></section>
       <section id="v-finances" class="hide"></section>
+      <section id="v-shopping" class="hide"></section>
       <section id="v-docs" class="hide">
         <input type="search" id="qd" placeholder="Dokumente durchsuchen" /><select
           id="docCat"
@@ -165,6 +167,17 @@
           ><select id="fown"></select
         ></label>
         <div id="fx"></div>
+        <div id="propertyFields" class="hide">
+          <h4>Immobilie</h4>
+          <div class="two">
+            <label class="f"><span>Eigentumsverhältnis</span><select id="propertyOwnership">
+              <option value="">Bitte wählen</option><option>Gemietet</option><option>Eigentum</option>
+            </select></label>
+            <label class="f"><span>Nutzung</span><select id="propertyUsage">
+              <option value="">Bitte wählen</option><option>Selbst bewohnt</option><option>Vermietet</option><option>Leerstehend</option>
+            </select></label>
+          </div>
+        </div>
         <div id="rentalFields" class="hide">
           <h4>Vermietung</h4>
           <label class="rental-enabled"><input type="checkbox" id="rentalActive" /> Dieses Objekt ist vermietet</label>
