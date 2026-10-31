@@ -1957,6 +1957,174 @@ body.modal-lock nav {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.undo-toast-stack {
+  position: fixed;
+  z-index: 10001;
+  left: 50%;
+  bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  width: max-content;
+  max-width: calc(100% - 32px);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.undo-toast-stack .toast {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: translateY(8px);
+  width: max-content;
+  max-width: 100%;
+  pointer-events: auto;
+  overflow: hidden;
+}
+.undo-toast-stack .toast.on {
+  transform: none;
+}
+.undo-toast-stack .toast {
+  color: #fff;
+}
+.toast.has-progress::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--gold);
+  transform-origin: left center;
+  animation: toast-countdown var(--toast-duration) linear forwards;
+}
+@keyframes toast-countdown {
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast.has-progress::after {
+    animation: none;
+  }
+}
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: none;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 34, 0.62);
+  backdrop-filter: blur(5px);
+}
+.loading-overlay.on {
+  display: grid;
+}
+.loading-card {
+  width: min(100%, 340px);
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 26px 24px 23px;
+  border: 1px solid rgba(198, 167, 107, 0.32);
+  border-radius: 20px;
+  background: #202b3a;
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+}
+.loading-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  background: rgba(198, 167, 107, 0.14);
+  color: #d7bc86;
+}
+.loading-icon .ui-icon {
+  width: 25px;
+  height: 25px;
+  animation: loading-turn 1.8s ease-in-out infinite;
+}
+.loading-description {
+  min-height: 1.4em;
+  color: #c4cad2;
+  font-size: 13px;
+}
+.loading-track {
+  width: 100%;
+  height: 3px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.loading-track i {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gold);
+  animation: loading-progress 1.4s ease-in-out infinite;
+}
+.developer-head {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  margin: 12px 0 18px;
+}
+.developer-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+.developer-filter {
+  margin-top: 18px;
+}
+.developer-filter select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--ln);
+  border-radius: 11px;
+  background: var(--sf);
+}
+.developer-logs {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.developer-log {
+  padding: 12px;
+  border: 1px solid var(--ln);
+  border-left: 3px solid var(--mu);
+  border-radius: 11px;
+  background: var(--sf);
+  overflow-wrap: anywhere;
+}
+.developer-log[data-level="error"] { border-left-color: var(--rd); }
+.developer-log[data-level="warning"] { border-left-color: var(--wa); }
+.developer-log b,
+.developer-log small {
+  display: block;
+}
+.developer-log small {
+  color: var(--mu);
+  margin-top: 3px;
+}
+@keyframes loading-turn {
+  50% { transform: rotate(12deg) scale(1.05); }
+}
+@keyframes loading-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(280%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-icon .ui-icon,
+  .loading-track i {
+    animation-duration: 3s;
+  }
+}
 
 /* Anleitungen im Drive-Dialog */
 .guide {
@@ -2284,9 +2452,97 @@ html[data-theme="dark"] .toast {
 html[data-theme="dark"] .toast button {
   color: #17120a;
 }
+html[data-theme="dark"] .undo-toast-stack .toast {
+  background: #202b3a;
+  color: #fff;
+}
+html[data-theme="dark"] .undo-toast-stack .toast button {
+  color: #e0c58f;
+}
 html[data-theme="dark"] .settings-dialog-backdrop,
 html[data-theme="dark"] .ov {
   background: rgba(0, 0, 0, 0.6);
+}
+/* The data-area choice is a privacy boundary, not an authorization mechanism. */
+.area-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 10002;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 34, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.area-picker.hide {
+  display: none;
+}
+.area-picker-card {
+  width: min(100%, 440px);
+  padding: 26px;
+  border: 1px solid rgba(198, 167, 107, 0.3);
+  border-radius: 20px;
+  background: var(--sf);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.3);
+}
+.area-picker-card h2 {
+  margin: 5px 0 4px;
+  font-size: 24px;
+}
+.area-picker-card > p,
+.area-picker-card > small {
+  color: var(--mu);
+}
+.area-options {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0 14px;
+}
+.area-option {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 15px 16px;
+  text-align: left;
+  border: 1px solid var(--ln);
+  border-radius: 13px;
+  background: var(--sf);
+}
+.area-option:hover,
+.area-option:focus-visible {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+.area-option b {
+  color: var(--tx);
+  font-size: 16px;
+}
+.area-option span {
+  color: var(--mu);
+  font-size: 13px;
+}
+.area-cancel {
+  width: 100%;
+  margin-top: 16px;
+}
+.area-change {
+  width: 100%;
+  margin: 0 0 14px;
+}
+html[data-theme="dark"] .area-picker-card {
+  border-color: rgba(198, 167, 107, 0.28);
+}
+html[data-theme="dark"] .area-option:hover,
+html[data-theme="dark"] .area-option:focus-visible {
+  background: rgba(198, 167, 107, 0.12);
+}
+@media (prefers-reduced-motion: reduce) {
+  .area-picker *,
+  .area-picker *::before,
+  .area-picker *::after {
+    transition: none !important;
+  }
 }
 
 /* Hell/Dunkel-Umschalter im Kopfbereich */

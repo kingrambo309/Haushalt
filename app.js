@@ -1,10 +1,27 @@
 const $ = (s) => document.querySelector(s);
 
 // Version shown under Einstellungen → Versionsinfo. Raise it with every release (also renews the offline cache).
-const APP_VERSION = "14.1",
+const APP_VERSION = "14.3",
   APP_DATE = "2026-10-31",
   DATA_FORMAT = 2;
 const CHANGELOG = [
+  {
+    v: "14.3",
+    date: "2026-10-31",
+    items: [
+      "NAR Home und NAR Family mit getrennten lokalen Datenbereichen ergänzt",
+      "Google-Drive-Ablage pro Bereich getrennt; Familienordner wird nicht automatisch angelegt",
+    ],
+  },
+  {
+    v: "14.2",
+    date: "2026-10-31",
+    items: [
+      "Undo-Löschungen auf drei Sekunden mit Countdown verkürzt",
+      "Löschbestätigungen und endgültige Löschung im Papierkorb ergänzt",
+      "Zentralen Loading-Overlay für zeitintensive Vorgänge ergänzt",
+    ],
+  },
   {
     v: "14.1",
     date: "2026-10-31",
@@ -60,6 +77,8 @@ const ICONS = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
+  cloud: '<path d="M20 16.2A4.5 4.5 0 0 0 18.5 7.5 6 6 0 0 0 7 8.7 4 4 0 0 0 7 17h12"/>',
+  "cloud-upload": '<path d="M20 16.2A4.5 4.5 0 0 0 18.5 7.5 6 6 0 0 0 7 8.7 4 4 0 0 0 7 17h5"/><path d="m10 14 3-3 3 3M13 11v9"/>',
   move: '<path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/>',
   replace:
     '<path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/>',
@@ -91,6 +110,43 @@ function icon(name, cls = "") {
 }
 // Static buttons in index.html declare their icon with data-icon="name".
 document.querySelectorAll("[data-icon]").forEach((el) => el.insertAdjacentHTML("afterbegin", icon(el.dataset.icon)));
+let loadingSequence = 0,
+  loadingTimer = null;
+const activeLoaders = new Map();
+function renderLoading() {
+  const overlay = $("#loadingOverlay");
+  if (!overlay) return;
+  const latest = [...activeLoaders.values()].pop();
+  if (!latest) {
+    clearTimeout(loadingTimer);
+    loadingTimer = null;
+    overlay.classList.remove("on");
+    overlay.setAttribute("aria-hidden", "true");
+    return;
+  }
+  $("#loadingTitle").textContent = latest.title;
+  $("#loadingDescription").textContent = latest.description;
+  $("#loadingIcon").innerHTML = icon(latest.iconName);
+}
+async function withLoading({ title, description = "", iconName = "replace" }, operation) {
+  const id = ++loadingSequence;
+  activeLoaders.set(id, { title, description, iconName });
+  if (activeLoaders.size === 1) {
+    loadingTimer = setTimeout(() => {
+      if (!activeLoaders.size) return;
+      const overlay = $("#loadingOverlay");
+      overlay.classList.add("on");
+      overlay.setAttribute("aria-hidden", "false");
+      renderLoading();
+    }, 180);
+  } else if ($("#loadingOverlay").classList.contains("on")) renderLoading();
+  try {
+    return await operation();
+  } finally {
+    activeLoaders.delete(id);
+    renderLoading();
+  }
+}
 
 const T = {
   Versicherung: { i: "shield-check", c: "#0e7c86", f: ["Gesellschaft", "Police-Nr."], dl: "Kündigung bis" },
@@ -160,12 +216,18 @@ const D = "https://www.googleapis.com/drive/v3/files";
 const T0 = JSON.parse(JSON.stringify(T)),
   SUB0 = JSON.parse(JSON.stringify(SUB)),
   OBJ0 = JSON.parse(JSON.stringify(OBJ));
-let data = JSON.parse(localStorage.getItem("hv_data") || "null") || { entries: [] };
+let activeArea = localStorage.getItem("hv_active_area") === "family" ? "family" : "home";
+const areaStorageKey = (name) =>
+    activeArea === "home" ? "hv_" + name : "hv_family_" + name,
+  areaLabel = () => (activeArea === "family" ? "NAR Family" : "NAR Home"),
+  areaFolderName = () => (activeArea === "family" ? "Familienverwaltung" : "Haushalt");
+let data = JSON.parse(localStorage.getItem(areaStorageKey("data")) || "null") || { entries: [] };
 function normalizeData() {
   data.entries = data.entries || [];
   data.events = data.events || [];
   data.deletedEvents = data.deletedEvents || [];
   data.trash = data.trash || [];
+  data.purgedTrash = data.purgedTrash || [];
   const s = (data.settings = data.settings || {});
   // Initial settings are copied from the defaults only once. upd stays 0 so synced settings always win over fresh defaults.
   if (!s.initialized) {
@@ -250,7 +312,7 @@ let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   evUploads = [],
   evRemovals = [];
 let settingsListKey = "providers";
-let exitArmedUntil = 0;
+let allowExit = false;
 let swipedAt = 0;
 let settingsOpen = [];
 let token = null,
@@ -258,6 +320,7 @@ let token = null,
   folderId = null,
   fileId = null,
   tab = "home",
+  developerMode = false,
   filter = "Alle",
   q = "",
   qd = "",
@@ -273,7 +336,7 @@ let sheetUploads = [],
 // Built-in Google OAuth client. It is public by design; an own ID can still be entered in the Drive settings.
 const DEFAULT_CLIENT_ID = "340909526339-j4kf4uj6urrsq3umjh4sqmj19v48q6nr.apps.googleusercontent.com";
 const cid = () => localStorage.getItem("hv_cid") || DEFAULT_CLIENT_ID;
-const role = () => localStorage.getItem("hv_role") || "owner";
+const role = () => localStorage.getItem(areaStorageKey("role")) || "owner";
 const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -373,6 +436,7 @@ async function ensureAuth() {
       await getToken();
       return true;
     } catch (e) {
+      recordDeveloperLog("error", "drive", "Google-Authentifizierung fehlgeschlagen.");
       if (e.message !== "NEEDS_AUTH") return false;
     }
   }
@@ -386,6 +450,7 @@ async function ensureAuth() {
     await getToken();
     return true;
   } catch (e) {
+    recordDeveloperLog("error", "drive", "Google-Authentifizierung fehlgeschlagen.");
     return false;
   }
 }
@@ -396,13 +461,20 @@ function markAuthExpired() {
 }
 async function api(url, opt = {}) {
   const t = await getToken();
-  const r = await fetch(url, { ...opt, headers: { ...(opt.headers || {}), Authorization: "Bearer " + t } });
+  let r;
+  try {
+    r = await fetch(url, { ...opt, headers: { ...(opt.headers || {}), Authorization: "Bearer " + t } });
+  } catch (e) {
+    recordDeveloperLog("error", "network", "Google-Drive-Netzwerkverbindung fehlgeschlagen.");
+    throw e;
+  }
   if (r.status === 401) {
     token = null;
     exp = 0;
     throw new Error("NEEDS_AUTH");
   }
   if (!r.ok) {
+    recordDeveloperLog("error", "drive", "Google-Drive-API-Fehler · HTTP " + r.status);
     let detail = "";
     try {
       const payload = await r.clone().json();
@@ -429,17 +501,22 @@ async function find(name, parent) {
 }
 async function ensureFolder() {
   const owner = role() === "owner";
-  const fq =
-    "name='Haushalt' and mimeType='application/vnd.google-apps.folder' and trashed=false" +
-    (owner ? " and 'me' in owners" : " and sharedWithMe=true");
+  const folderName = areaFolderName(),
+    fq =
+      "name='" +
+      qEsc(folderName) +
+      "' and mimeType='application/vnd.google-apps.folder' and trashed=false" +
+      (activeArea === "home" ? (owner ? " and 'me' in owners" : " and sharedWithMe=true") : "");
   const fl = await (await api(D + "?q=" + encodeURIComponent(fq) + "&fields=files(id)")).json();
-  folderId = fl.files[0] && fl.files[0].id;
-  if (!folderId && !owner) throw new Error("NOFOLDER");
+  const folders = fl.files || [];
+  if (activeArea === "family" && folders.length > 1) throw new Error("MULTIPLEFOLDERS");
+  folderId = folders[0] && folders[0].id;
+  if (!folderId && (activeArea === "family" || !owner)) throw new Error("NOFOLDER");
   if (!folderId) {
     const r = await api(D, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Haushalt", mimeType: "application/vnd.google-apps.folder" }),
+      body: JSON.stringify({ name: folderName, mimeType: "application/vnd.google-apps.folder" }),
     });
     folderId = (await r.json()).id;
   }
@@ -622,15 +699,20 @@ function mergeSimple(a, b) {
   return [...m.values()];
 }
 // Last synced `upd` per entry (this device). Used for three-way conflict detection.
-const syncBase = () => JSON.parse(localStorage.getItem("hv_synced") || "null");
+const syncBase = () => JSON.parse(localStorage.getItem(areaStorageKey("synced")) || "null");
 function rememberSyncBase() {
-  localStorage.setItem("hv_synced", JSON.stringify(Object.fromEntries(data.entries.map((e) => [e.id, e.upd || 0]))));
+  localStorage.setItem(
+    areaStorageKey("synced"),
+    JSON.stringify(Object.fromEntries(data.entries.map((e) => [e.id, e.upd || 0]))),
+  );
 }
 // Conflicts from older versions have no stored versions and cannot be compared, so they are dropped.
-const loadConflicts = () => JSON.parse(localStorage.getItem("hv_conflicts") || "[]").filter((c) => c.local && c.remote);
-const storeConflicts = (list) => localStorage.setItem("hv_conflicts", JSON.stringify(list));
+const loadConflicts = () =>
+  JSON.parse(localStorage.getItem(areaStorageKey("conflicts")) || "[]").filter((c) => c.local && c.remote);
+const storeConflicts = (list) => localStorage.setItem(areaStorageKey("conflicts"), JSON.stringify(list));
 function merge(a, b) {
   const del = new Set([...(a.del || []), ...(b.del || [])]),
+    purgedTrash = new Set([...(a.purgedTrash || []), ...(b.purgedTrash || [])]),
     m = new Map(),
     conflicts = [],
     base = syncBase();
@@ -667,7 +749,8 @@ function merge(a, b) {
     events: mergedEvents,
     deletedEvents,
     settings: (sb.upd || 0) > (sa.upd || 0) ? sb : sa,
-    trash: mergeTrash(a.trash, b.trash),
+    purgedTrash: [...purgedTrash],
+    trash: mergeTrash(a.trash, b.trash).filter((t) => !purgedTrash.has(trashKey(t))),
   };
 }
 /* ---- Papierkorb (gemeinsam, in daten.json) ---- */
@@ -706,6 +789,7 @@ function needsPush(remote, local) {
     (local.events || []).some((e) => !rEvents.has(e.id) || rEvents.get(e.id) < (e.updatedAt || 0)) ||
     (local.del || []).some((id) => !rDel.has(id)) ||
     (local.deletedEvents || []).some((id) => !rDelEv.has(id)) ||
+    (local.purgedTrash || []).some((key) => !(remote.purgedTrash || []).includes(key)) ||
     (local.settings?.upd || 0) > (remote.settings?.upd || 0) ||
     (local.trash || []).some((t) => {
       const r = (remote.trash || []).find((x) => trashKey(x) === trashKey(t));
@@ -725,7 +809,7 @@ async function pullRemote() {
   normalizeData();
   applySettings();
   if (JSON.stringify(data) !== before) {
-    localStorage.setItem("hv_data", JSON.stringify(data));
+    localStorage.setItem(areaStorageKey("data"), JSON.stringify(data));
     render();
     checkReminders();
   }
@@ -739,73 +823,161 @@ async function backgroundSync() {
     if (!authExpired) markAuthExpired();
     return;
   }
-  syncing = true;
-  let push = false;
-  try {
-    push = await pullRemote();
-  } catch (e) {
-    if (e.message === "NEEDS_AUTH") markAuthExpired();
-  } finally {
-    syncing = false;
-  }
-  if (push) {
-    clearTimeout(timer);
-    timer = setTimeout(save, 300);
-  }
+  return withLoading(
+    {
+      title: "Synchronisiere Daten",
+      description: "Änderungen von anderen Geräten werden übernommen.",
+      iconName: "replace",
+    },
+    async () => {
+      syncing = true;
+      let push = false;
+      try {
+        push = await pullRemote();
+      } catch (e) {
+        recordDeveloperLog("error", "sync", "Synchronisation fehlgeschlagen.");
+        if (e.message === "NEEDS_AUTH") markAuthExpired();
+        else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
+      } finally {
+        syncing = false;
+      }
+      if (push) {
+        clearTimeout(timer);
+        timer = setTimeout(save, 300);
+      }
+    },
+  );
 }
 async function connect() {
-  try {
-    setSt("Verbinde mit Google Drive …", "busy");
-    await getToken();
-    await ensureFolder();
-    const u = (await (await api("https://www.googleapis.com/drive/v3/about?fields=user")).json()).user;
-    who = u.emailAddress || u.displayName || "Google-Konto";
-    authExpired = false;
-    await save();
-    render();
-  } catch (e) {
-    if (e.message === "NOFOLDER") {
-      setSt("Ordner nicht freigegeben", "err");
-      showAlert(
-        "Ordner nicht freigegeben",
-        "Der Ordner „Haushalt“ ist für dieses Konto noch nicht freigegeben. Bitte das Hauptkonto, ihn in den Einstellungen über „Ordner freigeben“ zu teilen.",
-      );
-    } else if (e.message === "NEEDS_AUTH" && folderId) markAuthExpired();
-    else setSt("Nicht verbunden", "err");
-    render();
-  }
+  return withLoading(
+    {
+      title: "Verbinde Google Drive",
+      description: "Anmeldung und Datenordner werden geprüft.",
+      iconName: "cloud",
+    },
+    async () => {
+      try {
+        setSt("Verbinde mit Google Drive …", "busy");
+        await getToken();
+        await ensureFolder();
+        const u = (await (await api("https://www.googleapis.com/drive/v3/about?fields=user")).json()).user;
+        who = u.emailAddress || u.displayName || "Google-Konto";
+        authExpired = false;
+        await save();
+        render();
+      } catch (e) {
+        recordDeveloperLog("error", "drive", "Google-Drive-Verbindung fehlgeschlagen.");
+        if (e.message === "NOFOLDER") {
+          setSt("Ordner nicht freigegeben", "err");
+          showAlert(
+            "Ordner nicht gefunden",
+            activeArea === "family"
+              ? "Der Ordner „Familienverwaltung“ ist für dieses Google-Konto nicht erreichbar. Bitte prüfe die Drive-Freigabe."
+              : "Der Ordner „Haushalt“ ist für dieses Konto noch nicht freigegeben. Bitte das Hauptkonto, ihn in den Einstellungen über „Ordner freigeben“ zu teilen.",
+          );
+        } else if (e.message === "MULTIPLEFOLDERS") {
+          setSt("Mehrere Familienordner gefunden", "err");
+          showAlert(
+            "Familienordner nicht eindeutig",
+            "Es sind mehrere zugängliche Ordner mit dem Namen „Familienverwaltung“ vorhanden. Zum Schutz der Daten wurde keine Ablage ausgewählt.",
+          );
+        } else if (e.message === "NEEDS_AUTH" && folderId) markAuthExpired();
+        else setSt("Nicht verbunden", "err");
+        render();
+      }
+    },
+  );
 }
 async function save() {
-  if (!folderId) {
-    setSt("Nicht verbunden – Änderungen nur auf diesem Gerät gespeichert");
-    return false;
+  return withLoading(
+    {
+      title: "Synchronisiere Daten",
+      description: "Änderungen werden sicher mit Google Drive abgeglichen.",
+      iconName: "replace",
+    },
+    async () => {
+      if (!folderId) {
+        setSt("Nicht verbunden – Änderungen nur auf diesem Gerät gespeichert");
+        return false;
+      }
+      if (syncing) {
+        clearTimeout(timer);
+        timer = setTimeout(save, 500);
+        return false;
+      }
+      syncing = true;
+      try {
+        const push = await pullRemote();
+        if (push || !fileId) {
+          const r = await up("daten.json", new Blob([JSON.stringify(data)], { type: "application/json" }), fileId);
+          fileId = (await r.json()).id;
+        }
+        rememberSyncBase();
+        setSt("Synchronisiert · " + who, "ok");
+        return true;
+      } catch (e) {
+        recordDeveloperLog("error", "sync", "Synchronisation fehlgeschlagen.");
+        if (e.message === "NEEDS_AUTH") markAuthExpired();
+        else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
+        return false;
+      } finally {
+        syncing = false;
+      }
+    },
+  );
+}
+function updateAreaBrand() {
+  const label = areaLabel();
+  $("#appAreaName").textContent = label.replace("NAR ", "");
+  document.title = label;
+}
+function openAreaPicker(canCancel = true) {
+  $("#areaCancel").classList.toggle("hide", !canCancel);
+  $("#areaPicker").classList.remove("hide");
+  $("#areaCurrent").textContent = "Aktuell: " + areaLabel();
+}
+async function selectArea(nextArea) {
+  if (!["home", "family"].includes(nextArea)) return;
+  if (nextArea === activeArea) {
+    $("#areaPicker").classList.add("hide");
+    render();
+    return;
   }
-  // Never run two syncs at once; try again shortly.
-  if (syncing) {
-    clearTimeout(timer);
-    timer = setTimeout(save, 500);
-    return false;
+  if (syncing || activeLoaders.size) {
+    showToast("Bitte warte, bis der aktuelle Vorgang abgeschlossen ist.");
+    return;
   }
-  syncing = true;
-  try {
-    const push = await pullRemote();
-    if (push || !fileId) {
-      const r = await up("daten.json", new Blob([JSON.stringify(data)], { type: "application/json" }), fileId);
-      fileId = (await r.json()).id;
-    }
-    rememberSyncBase();
-    setSt("Synchronisiert · " + who, "ok");
-    return true;
-  } catch (e) {
-    if (e.message === "NEEDS_AUTH") markAuthExpired();
-    else setSt("Synchronisierung fehlgeschlagen: " + (e.message || "Unbekannter Fehler"), "err");
-    return false;
-  } finally {
-    syncing = false;
+  clearTimeout(timer);
+  commitPendingDeletes();
+  clearTimeout(timer);
+  if (folderId && !(await save())) {
+    showAlert(
+      "Bereich nicht gewechselt",
+      "Die aktuellen Änderungen konnten nicht bestätigt synchronisiert werden. Bitte prüfe die Verbindung und versuche es erneut.",
+    );
+    return;
   }
+  localStorage.setItem("hv_active_area", nextArea);
+  activeArea = nextArea;
+  data = JSON.parse(localStorage.getItem(areaStorageKey("data")) || "null") || { entries: [] };
+  normalizeData();
+  applySettings();
+  folderId = null;
+  fileId = null;
+  who = "";
+  authExpired = false;
+  tab = "home";
+  settingsOpen = [];
+  updateAreaBrand();
+  applyTheme();
+  $("#areaPicker").classList.add("hide");
+  history.replaceState({ narHome: true, tab: "home" }, "", location.href);
+  render();
+  setSt("Nicht mit Google Drive verbunden – tippen zum Verbinden");
+  if (tokenValid()) await connect();
 }
 function dirty() {
-  localStorage.setItem("hv_data", JSON.stringify(data));
+  localStorage.setItem(areaStorageKey("data"), JSON.stringify(data));
   render();
   clearTimeout(timer);
   if (folderId) setSt("Änderungen werden synchronisiert …", "busy");
@@ -816,8 +988,9 @@ function dirty() {
 
 /* ---- Erinnerungen (laufen, solange die App geöffnet ist) ---- */
 const REMINDER_DEFAULT_TIME = "09:00";
-const loadReminders = () => JSON.parse(localStorage.getItem("hv_reminders") || "[]");
-const storeReminders = (list) => localStorage.setItem("hv_reminders", JSON.stringify(list.slice(-100)));
+const loadReminders = () => JSON.parse(localStorage.getItem(areaStorageKey("reminders")) || "[]");
+const storeReminders = (list) =>
+  localStorage.setItem(areaStorageKey("reminders"), JSON.stringify(list.slice(-100)));
 function atTime(key, time) {
   const d = parseLocalDate(key),
     [h, m] = (time || REMINDER_DEFAULT_TIME).split(":").map(Number);
@@ -874,7 +1047,7 @@ function notify(r) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   // Some mobile browsers only allow notifications from a service worker; the in-app list still shows the reminder.
   try {
-    new Notification("NAR Home · " + r.title, { body: r.body, tag: r.key });
+    new Notification(areaLabel() + " · " + r.title, { body: r.body, tag: activeArea + ":" + r.key });
   } catch (e) {}
 }
 function checkReminders() {
@@ -1136,7 +1309,7 @@ function rowHtml(e) {
   );
 }
 // Collapsible home sections; the open/closed state is remembered on this device.
-const homeFolds = () => JSON.parse(localStorage.getItem("hv_home_folds") || "{}");
+const homeFolds = () => JSON.parse(localStorage.getItem(areaStorageKey("home_folds")) || "{}");
 function homeFold(key, title, count, content) {
   const open = homeFolds()[key] !== false;
   return (
@@ -1762,7 +1935,9 @@ function renderSettings() {
   const cats = Object.keys(T);
   const iconSvg = (d) => '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">' + d + "</svg>";
   let h =
-    '<h2 style="margin-top:8px">Einstellungen</h2><p class="settings-note">Verwalte Kategorien, Gesellschaften und weitere Stammdaten an einem Ort.</p>';
+    '<h2 style="margin-top:8px">Einstellungen</h2><p class="settings-note">Verwalte Kategorien, Gesellschaften und weitere Stammdaten an einem Ort.</p><button type="button" class="btn s area-change" data-change-area>Aktiver Bereich: ' +
+    esc(areaLabel()) +
+    " · Wechseln</button>";
   h +=
     '<details class="settings-section"><summary><span class="set-icon">' +
     iconSvg(
@@ -1806,7 +1981,11 @@ function renderSettings() {
   h +=
     '<details class="settings-section"><summary><span class="set-icon">' +
     iconSvg(ICONS.settings) +
-    '</span><span><span class="set-title">App & Synchronisation</span><span class="set-sub">Verbindung, Erinnerungen und weitere Funktionen</span></span></summary><div class="settings-content"><p class="settings-note">Einträge, Termine und Einstellungen werden auf diesem Gerät gespeichert und – sobald Google Drive verbunden ist – automatisch mit dem Partnerkonto synchronisiert.</p><p class="settings-note">Erinnerungen erscheinen in der Übersicht, solange NAR Home geöffnet ist. Benachrichtigungen: <b>' +
+    '</span><span><span class="set-title">App & Synchronisation</span><span class="set-sub">Verbindung, Erinnerungen und weitere Funktionen</span></span></summary><div class="settings-content"><p class="settings-note">Einträge, Termine und Einstellungen werden in ' +
+    esc(areaLabel()) +
+    " gespeichert und – sobald Google Drive verbunden ist – mit den für diesen Ordner berechtigten Nutzern synchronisiert.</p><p class=\"settings-note\">Erinnerungen erscheinen in der Übersicht, solange " +
+    esc(areaLabel()) +
+    ' geöffnet ist. Benachrichtigungen: <b>' +
     (!notificationsAvailable()
       ? "nicht unterstützt"
       : Notification.permission === "granted"
@@ -1830,7 +2009,7 @@ function renderSettings() {
       : "") +
     "</div></details>";
   const th = themeSetting(),
-    last = +localStorage.getItem("hv_last_backup") || 0,
+    last = +localStorage.getItem(areaStorageKey("last_backup")) || 0,
     lastTxt = last
       ? new Date(last).toLocaleDateString("de-DE", { dateStyle: "medium" }) +
         " (vor " +
@@ -1923,7 +2102,8 @@ function versionInfo() {
 }
 async function copyVersionInfo() {
   const text =
-    "NAR Home\n" +
+    areaLabel() +
+    "\n" +
     versionInfo()
       .map(([k, v]) => k + ": " + v)
       .join("\n") +
@@ -1963,7 +2143,7 @@ function renderSettingsList() {
     : '<p class="settings-note">Noch keine Einträge.</p>';
 }
 function saveDataLocal() {
-  localStorage.setItem("hv_data", JSON.stringify(data));
+  localStorage.setItem(areaStorageKey("data"), JSON.stringify(data));
   if (folderId) {
     clearTimeout(timer);
     setSt("Änderungen werden synchronisiert …", "busy");
@@ -2081,7 +2261,10 @@ async function attachEventFiles(e) {
     title = $("#evName").value.trim() || "Termin";
   try {
     setSt("Ordner wird vorbereitet …", "busy");
-    const folder = await folderFor("Kalender", date.slice(0, 4));
+    const folder = await withLoading(
+      { title: "Bereite Ablage vor", description: "Kalenderordner wird geprüft.", iconName: "cloud" },
+      () => folderFor("Kalender", date.slice(0, 4)),
+    );
     for (const f of files) {
       const name = uniqueDocName(
         buildDocName({ date, title, type: "", ext: fileExt(f.name, f.type) }),
@@ -2090,16 +2273,21 @@ async function attachEventFiles(e) {
       );
       try {
         setSt("Lade hoch: " + name, "busy");
-        const j = await (await up(name, f, null, folder)).json();
+        const j = await withLoading(
+          { title: "Lade Anhang hoch", description: name, iconName: "cloud-upload" },
+          async () => (await up(name, f, null, folder)).json(),
+        );
         evUploads.push(j.id);
         evFiles.push({ id: j.id, name: j.name || name, mimeType: j.mimeType || f.type || "" });
         renderEventFiles();
       } catch (err) {
+        recordDeveloperLog("error", "upload", "Kalenderanhang fehlgeschlagen.");
         await showAlert("Upload fehlgeschlagen", "„" + f.name + "“ konnte nicht hochgeladen werden.");
       }
     }
     setSt("Anhang gespeichert", "ok");
   } catch (err) {
+    recordDeveloperLog("error", "upload", "Kalenderordner konnte nicht vorbereitet werden.");
     setSt("Upload fehlgeschlagen", "err");
     showAlert("Upload fehlgeschlagen", "Der Ordner in Google Drive konnte nicht angelegt werden.");
   }
@@ -2290,7 +2478,7 @@ function showSettingsDialog({
 }
 // Replacements for the native alert/confirm/prompt in the app's own dialog style.
 let toastTimer = null;
-function showToast(text, { ms = 2000, action = "", onAction = null } = {}) {
+function showToast(text, { ms = 2000, action = "", onAction = null, progress = false } = {}) {
   let t = document.querySelector(".toast");
   if (!t) {
     t = document.createElement("div");
@@ -2301,8 +2489,11 @@ function showToast(text, { ms = 2000, action = "", onAction = null } = {}) {
   }
   t.innerHTML = "<span>" + esc(text) + "</span>" + (action ? '<button type="button">' + esc(action) + "</button>" : "");
   t.classList.toggle("has-action", !!action);
+  t.classList.toggle("has-progress", progress);
+  t.style.setProperty("--toast-duration", ms + "ms");
   if (action)
     t.querySelector("button").onclick = () => {
+      clearTimeout(toastTimer);
       t.classList.remove("on");
       onAction && onAction();
     };
@@ -2312,26 +2503,50 @@ function showToast(text, { ms = 2000, action = "", onAction = null } = {}) {
 }
 // Deletions wait a few seconds before they become final, so they can be undone from the toast.
 const pendingDeletes = new Map();
-const UNDO_MS = 6000;
+const UNDO_MS = 3000;
+function removeUndoToast(toast) {
+  const stack = toast.parentElement;
+  toast.remove();
+  if (stack && !stack.children.length) stack.remove();
+}
 function deleteWithUndo({ key, text, remove, restore, commit }) {
+  const existing = pendingDeletes.get(key);
+  if (existing) return;
   remove();
   render();
   const finish = () => {
     if (!pendingDeletes.has(key)) return;
-    clearTimeout(pendingDeletes.get(key).timer);
+    const pending = pendingDeletes.get(key);
+    clearTimeout(pending.timer);
     pendingDeletes.delete(key);
+    if (pending.toast) removeUndoToast(pending.toast);
     commit();
   };
   const cancel = () => {
     if (!pendingDeletes.has(key)) return;
-    clearTimeout(pendingDeletes.get(key).timer);
+    const pending = pendingDeletes.get(key);
+    clearTimeout(pending.timer);
     pendingDeletes.delete(key);
+    if (pending.toast) removeUndoToast(pending.toast);
     restore();
     render();
     showToast("Wiederhergestellt");
   };
-  pendingDeletes.set(key, { finish, timer: setTimeout(finish, UNDO_MS) });
-  showToast(text, { ms: UNDO_MS, action: "Rückgängig", onAction: cancel });
+  const toast = document.createElement("div");
+  let stack = document.querySelector(".undo-toast-stack");
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.className = "undo-toast-stack";
+    document.body.appendChild(stack);
+  }
+  toast.className = "toast has-action has-progress on";
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "polite");
+  toast.style.setProperty("--toast-duration", UNDO_MS + "ms");
+  toast.innerHTML = "<span>" + esc(text) + '</span><button type="button">Rückgängig</button>';
+  toast.querySelector("button").onclick = cancel;
+  stack.appendChild(toast);
+  pendingDeletes.set(key, { finish, timer: setTimeout(finish, UNDO_MS), toast });
 }
 const commitPendingDeletes = () => [...pendingDeletes.values()].forEach((p) => p.finish());
 window.addEventListener("pagehide", commitPendingDeletes);
@@ -2581,6 +2796,16 @@ async function deleteListItem(i) {
 }
 
 function render() {
+  const sections = [...document.querySelectorAll("main > section")];
+  sections.forEach((section) => {
+    section.classList.toggle("hide", developerMode || section.id !== "v-" + tab);
+  });
+  $("#developerView").classList.toggle("hide", !developerMode);
+  document.querySelector("nav").classList.toggle("hide", developerMode);
+  if (developerMode) {
+    renderDeveloperConsole();
+    return;
+  }
   ["home", "list", "docs", "stats", "calendar", "settings"].forEach((t) =>
     $("#v-" + t).classList.toggle("hide", t !== tab),
   );
@@ -2601,6 +2826,115 @@ function render() {
     settings: renderSettings,
   })[tab]();
 }
+const developerLogs = [];
+const developerLogLimit = 200;
+function recordDeveloperLog(level, category, message) {
+  const safeMessage = String(message || "")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redigiert]")
+    .replace(/\b(access[_-]?token|refresh[_-]?token|password|passwort|secret|authorization)\b\s*[:=]\s*\S+/gi, "$1=[redigiert]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[E-Mail redigiert]")
+    .replace(/https?:\/\/[^\s?]+(?:\?[^\s]*)?/gi, "[URL redigiert]")
+    .slice(0, 240);
+  developerLogs.push({ time: new Date().toISOString(), level, category, message: safeMessage });
+  if (developerLogs.length > developerLogLimit) developerLogs.shift();
+  if (developerMode) renderDeveloperConsole();
+}
+function renderDeveloperConsole() {
+  const filter = $("#developerFilter")?.value || "all";
+  $("#developerDriveStatus").textContent = folderId ? "Verbunden" : "Nicht verbunden";
+  $("#developerSyncStatus").textContent = syncing ? "Aktiv" : $("#st").classList.contains("err") ? "Fehler" : "Bereit";
+  $("#developerLogCount").textContent = String(developerLogs.length);
+  $("#developerVersion").textContent = APP_VERSION;
+  $("#developerRuntime").textContent =
+    matchMedia("(display-mode: standalone)").matches || navigator.standalone === true ? "Installierte PWA" : "Webbrowser";
+  const visible = developerLogs.filter(
+    (entry) => filter === "all" || entry.level === filter || entry.category === filter,
+  );
+  const categoryLabel = (category) =>
+    ({
+      drive: "Google Drive",
+      sync: "Synchronisation",
+      network: "Netzwerk",
+      upload: "Upload",
+      download: "Download",
+      system: "System",
+    })[category] || category;
+  $("#developerLogs").innerHTML = visible.length
+    ? visible
+        .slice()
+        .reverse()
+        .map(
+          (entry) =>
+            '<article class="developer-log" data-level="' +
+            esc(entry.level) +
+            '"><b>' +
+            esc(categoryLabel(entry.category)) +
+            " · " +
+            esc(entry.level === "error" ? "Fehler" : entry.level === "warning" ? "Warnung" : "Info") +
+            "</b><small>" +
+            esc(new Date(entry.time).toLocaleString("de-DE")) +
+            "</small><div>" +
+            esc(entry.message) +
+            "</div></article>",
+        )
+        .join("")
+    : '<p class="settings-note">Keine Protokolleinträge in dieser Kategorie.</p>';
+}
+let logoTapCount = 0,
+  logoTapTimer = null;
+document.querySelector(".brand-logo").addEventListener("click", () => {
+  logoTapCount++;
+  clearTimeout(logoTapTimer);
+  logoTapTimer = setTimeout(() => (logoTapCount = 0), 1800);
+  if (logoTapCount < 5) return;
+  logoTapCount = 0;
+  developerMode = true;
+  recordDeveloperLog("info", "system", "Developer-Konsole geöffnet.");
+  history.pushState({ narHome: true, developer: true }, "", location.href);
+  render();
+});
+$("#developerView").addEventListener("click", async (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.hasAttribute("data-dev-back")) {
+    if (history.state?.developer) history.back();
+    else {
+      developerMode = false;
+      render();
+    }
+  } else if (button.hasAttribute("data-dev-copy")) {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(developerLogs, null, 2));
+      showToast("Protokolle kopiert");
+    } catch (e) {
+      showAlert("Kopieren nicht möglich", "Bitte erlaube den Zugriff auf die Zwischenablage.");
+    }
+  } else if (button.hasAttribute("data-dev-export")) {
+    downloadBlob(
+      new Blob([JSON.stringify(developerLogs, null, 2)], { type: "application/json" }),
+      "NAR-Home-Developer-Log.json",
+    );
+    showToast("Protokolle exportiert");
+  } else if (button.hasAttribute("data-dev-clear")) {
+    if (!(await showConfirm("Protokolle löschen?", "Alle technischen Protokolle auf diesem Gerät werden gelöscht.", "Löschen", true))) return;
+    developerLogs.length = 0;
+    renderDeveloperConsole();
+  }
+});
+$("#developerFilter").addEventListener("change", renderDeveloperConsole);
+window.addEventListener("error", (event) => {
+  const source = String(event.filename || "").split(/[?#]/)[0].split(/[\\/]/).pop();
+  recordDeveloperLog("error", "system", "JavaScript-Fehler" + (source ? " in " + source : "") + (event.lineno ? " · Zeile " + event.lineno : ""));
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const name = event.reason && event.reason.name ? event.reason.name : "Promise-Fehler";
+  recordDeveloperLog("error", "system", "Unbehandelte Promise-Ablehnung: " + name);
+});
+const originalConsoleWarn = console.warn.bind(console);
+console.warn = (...args) => {
+  recordDeveloperLog("warning", "system", "JavaScript-Warnung");
+  originalConsoleWarn(...args);
+};
 
 /* ---- Eintrag bearbeiten ---- */
 const optionsHtml = (list, selected, emptyLabel) =>
@@ -2951,7 +3285,17 @@ async function untrashDrive(ids) {
   }
   return failed;
 }
-async function restoreFromTrash(key) {
+function restoreFromTrash(key) {
+  return withLoading(
+    {
+      title: "Stelle Eintrag wieder her",
+      description: "Daten und zugehörige Dokumente werden wiederhergestellt.",
+      iconName: "restore",
+    },
+    () => restoreFromTrashTask(key),
+  );
+}
+async function restoreFromTrashTask(key) {
   const t = (data.trash || []).find((x) => trashKey(x) === key && !x.restoredAt);
   if (!t) return;
   if (t.kind === "occ" && !data.events.some((e) => e.id === t.eventId)) {
@@ -3048,6 +3392,93 @@ async function restoreFromTrash(key) {
     );
   else showToast("„" + t.title + "“ wiederhergestellt");
 }
+async function belongsToActiveDriveArea(fileId) {
+  if (!folderId) return false;
+  const pending = [fileId],
+    visited = new Set();
+  while (pending.length) {
+    const id = pending.pop();
+    if (id === folderId) return true;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const info = await (await api(D + "/" + encodeURIComponent(id) + "?fields=parents")).json();
+    pending.push(...(info.parents || []));
+  }
+  return false;
+}
+async function permanentlyDeleteFromTrash(key) {
+  const t = (data.trash || []).find((x) => trashKey(x) === key && !x.restoredAt);
+  if (!t) return;
+  const docIds = [
+    ...new Set(
+      (t.kind === "doc"
+        ? [t.id]
+        : t.kind === "entry"
+          ? (t.item.docs || []).map((d) => d.id)
+          : t.kind === "event"
+            ? (t.item.files || []).map((d) => d.id)
+            : []
+      ).filter(Boolean),
+    ),
+  ];
+  if (docIds.length && !folderId) {
+    showAlert("Google Drive nicht verbunden", "Zum endgültigen Löschen der Dokumente muss Google Drive verbunden sein.");
+    return;
+  }
+  if (docIds.length && !(await ensureAuth())) return;
+  const description =
+    "„" +
+    t.title +
+    "“ und " +
+    (docIds.length
+      ? docIds.length + (docIds.length === 1 ? " zugehöriges Dokument" : " zugehörige Dokumente")
+      : " die gespeicherten Eintragsdaten") +
+    " werden dauerhaft gelöscht und können nicht wiederhergestellt werden.";
+  if (!(await showDeleteDialog("Endgültig löschen?", description))) return;
+  setSt("Lösche endgültig …", "busy");
+  const failed = await withLoading(
+    {
+      title: "Lösche endgültig",
+      description: "Papierkorb und Google-Drive-Dateien werden dauerhaft bereinigt.",
+      iconName: "trash",
+    },
+    async () => {
+      const failures = [];
+      for (const id of docIds) {
+        try {
+          if (!(await belongsToActiveDriveArea(id))) {
+            failures.push(id);
+            continue;
+          }
+          await api(D + "/" + encodeURIComponent(id), { method: "DELETE" });
+        } catch (e) {
+          if (!/^Drive 404\b/.test(e.message || "")) failures.push(id);
+        }
+      }
+      return failures;
+    },
+  );
+  if (failed.length) {
+    setSt("Endgültiges Löschen fehlgeschlagen", "err");
+    showAlert(
+      "Nicht vollständig gelöscht",
+      failed.length +
+        " Dokument(e) konnten wegen fehlender Berechtigung, eines anderen Datenbereichs oder eines Verbindungsfehlers nicht endgültig gelöscht werden. Der Papierkorbeintrag bleibt zur Wiederholung erhalten.",
+    );
+    return;
+  }
+  const removedKeys = new Set([
+    key,
+    ...(docIds.length
+      ? (data.trash || []).filter((x) => x.kind === "doc" && docIds.includes(x.id)).map(trashKey)
+      : []),
+  ]);
+  data.purgedTrash = [...new Set([...(data.purgedTrash || []), ...removedKeys])];
+  data.trash = (data.trash || []).filter((x) => !removedKeys.has(trashKey(x)));
+  dirty();
+  setSt("Endgültig gelöscht", "ok");
+  showToast("Dauerhaft gelöscht");
+}
 let trashTab = "entry";
 function trashHtml() {
   const active = (data.trash || []).filter((t) => !t.restoredAt),
@@ -3108,6 +3539,12 @@ function trashHtml() {
               esc(t.title) +
               ' wiederherstellen" title="Wiederherstellen">' +
               icon("restore") +
+              '</button><button type="button" class="icon-btn danger" data-purge="' +
+              esc(trashKey(t)) +
+              '" aria-label="' +
+              esc(t.title) +
+              ' endgültig löschen" title="Endgültig löschen">' +
+              icon("trash") +
               "</button></div>"
             );
           })
@@ -3245,42 +3682,52 @@ async function showPdf(d, blob) {
 }
 async function openDoc(d) {
   if (!d) return;
-  resetPdf();
-  $("#docPreview").classList.add("on");
-  $("#previewName").textContent = d.name || "Dokument";
-  $("#previewDrive").href = driveViewUrl(d);
-  $("#previewBody").innerHTML = '<div class="preview-msg">Vorschau wird geladen …</div>';
-  previewDownloadName = d.name || "Dokument";
-  const prevSt = [$("#st").title, $("#st").className];
-  try {
-    setSt("Lade Vorschau …", "busy");
-    const response = await api(D + "/" + d.id + "?alt=media");
-    const blob = await response.blob();
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    previewUrl = URL.createObjectURL(blob);
-    const mime = (d.mimeType || blob.type || "").toLowerCase(),
-      name = (d.name || "").toLowerCase();
-    if (mime === "application/pdf" || name.endsWith(".pdf")) await showPdf(d, blob);
-    else if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/.test(name)) {
-      const img = document.createElement("img");
-      img.alt = d.name || "Dokument";
-      // e.g. HEIC photos can only be shown by Safari; other browsers fall back to Google Drive.
-      img.onerror = () =>
-        previewMessage(d, "Bildformat wird hier nicht unterstützt", "Google Drive kann dieses Bild anzeigen.");
-      img.src = previewUrl;
-      $("#previewBody").replaceChildren(img);
-    } else
-      previewMessage(
-        d,
-        "Für diesen Dateityp gibt es hier keine Vorschau",
-        "In Google Drive kannst du die Datei ansehen, ohne sie herunterzuladen.",
-      );
-    setSt(prevSt[0], prevSt[1]);
-  } catch (e) {
-    $("#previewBody").innerHTML =
-      '<div class="preview-msg"><b>Vorschau nicht verfügbar</b><p class="mu">Bitte prüfe die Google-Drive-Verbindung und versuche es erneut.</p></div>';
-    setSt("Dokument nicht ladbar", "err");
-  }
+  return withLoading(
+    {
+      title: "Lade Dokument",
+      description: "Vorschau wird aus Google Drive geladen.",
+      iconName: "download",
+    },
+    async () => {
+      resetPdf();
+      $("#docPreview").classList.add("on");
+      $("#previewName").textContent = d.name || "Dokument";
+      $("#previewDrive").href = driveViewUrl(d);
+      $("#previewBody").innerHTML = '<div class="preview-msg">Vorschau wird geladen …</div>';
+      previewDownloadName = d.name || "Dokument";
+      const prevSt = [$("#st").title, $("#st").className];
+      try {
+        setSt("Lade Vorschau …", "busy");
+        const response = await api(D + "/" + d.id + "?alt=media");
+        const blob = await response.blob();
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(blob);
+        const mime = (d.mimeType || blob.type || "").toLowerCase(),
+          name = (d.name || "").toLowerCase();
+        if (mime === "application/pdf" || name.endsWith(".pdf")) await showPdf(d, blob);
+        else if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/.test(name)) {
+          const img = document.createElement("img");
+          img.alt = d.name || "Dokument";
+          // e.g. HEIC photos can only be shown by Safari; other browsers fall back to Google Drive.
+          img.onerror = () =>
+            previewMessage(d, "Bildformat wird hier nicht unterstützt", "Google Drive kann dieses Bild anzeigen.");
+          img.src = previewUrl;
+          $("#previewBody").replaceChildren(img);
+        } else
+          previewMessage(
+            d,
+            "Für diesen Dateityp gibt es hier keine Vorschau",
+            "In Google Drive kannst du die Datei ansehen, ohne sie herunterzuladen.",
+          );
+        setSt(prevSt[0], prevSt[1]);
+      } catch (e) {
+        recordDeveloperLog("error", "drive", "Dokumentvorschau fehlgeschlagen.");
+        $("#previewBody").innerHTML =
+          '<div class="preview-msg"><b>Vorschau nicht verfügbar</b><p class="mu">Bitte prüfe die Google-Drive-Verbindung und versuche es erneut.</p></div>';
+        setSt("Dokument nicht ladbar", "err");
+      }
+    },
+  );
 }
 $("#pdfZoom").onclick = (e) => {
   const b = e.target.closest("[data-zoom]");
@@ -3337,7 +3784,7 @@ $("#v-home").addEventListener(
   (e) => {
     const d = e.target;
     if (!d.matches || !d.matches("details[data-fold]")) return;
-    localStorage.setItem("hv_home_folds", JSON.stringify({ ...homeFolds(), [d.dataset.fold]: d.open }));
+    localStorage.setItem(areaStorageKey("home_folds"), JSON.stringify({ ...homeFolds(), [d.dataset.fold]: d.open }));
   },
   true,
 );
@@ -3395,8 +3842,10 @@ $("#dlist").onclick = async (e) => {
   if (!d) return;
   if (b.dataset.dl) {
     try {
-      const r = await api(D + "/" + d.id + "?alt=media");
-      const blob = await r.blob();
+      const blob = await withLoading(
+        { title: "Lade Dokument herunter", description: d.name, iconName: "download" },
+        async () => await (await api(D + "/" + d.id + "?alt=media")).blob(),
+      );
       const u = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = u;
@@ -3406,6 +3855,7 @@ $("#dlist").onclick = async (e) => {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(u), 1000);
     } catch (err) {
+      recordDeveloperLog("error", "download", "Dokument-Download fehlgeschlagen.");
       showAlert("Download fehlgeschlagen", "Bitte prüfe die Google-Drive-Verbindung und versuche es erneut.");
     }
     return;
@@ -3511,7 +3961,10 @@ $("#fru").onchange = async (e) => {
     });
     if (!res) return;
     const clean = uniqueDocName(res.name, cur, sub, replaceTarget.id);
-    const j = await (await up(clean, f, replaceTarget.id)).json();
+    const j = await withLoading(
+      { title: "Ersetze Dokument", description: f.name, iconName: "cloud-upload" },
+      async () => (await up(clean, f, replaceTarget.id)).json(),
+    );
     replaceTarget.name = j.name || clean;
     replaceTarget.mimeType = j.mimeType || f.type;
     replaceTarget.docDate = res.date;
@@ -3539,7 +3992,8 @@ $("#fru").onchange = async (e) => {
     renderDocs();
     setSt("Dokument ersetzt", "ok");
   } catch (err) {
-    setSt("Ersetzen fehlgeschlagen", "err");
+  recordDeveloperLog("error", "upload", "Dokumentersetzung fehlgeschlagen.");
+  setSt("Ersetzen fehlgeschlagen", "err");
     showAlert("Ersetzen fehlgeschlagen", "Das Dokument konnte nicht ersetzt werden.");
   } finally {
     replaceTarget = null;
@@ -3570,7 +4024,14 @@ $("#fu").onchange = async (e) => {
         break;
       }
       setSt("Ordner wird vorbereitet …", "busy");
-      const targetFolder = await docTargetFolder(cur, sub);
+      const targetFolder = await withLoading(
+        {
+          title: "Bereite Dokumentordner vor",
+          description: "Der passende Ablageordner wird geprüft.",
+          iconName: "cloud",
+        },
+        () => docTargetFolder(cur, sub),
+      );
       const res = await showDocNameDialog({
         heading:
           (files.length > 1 ? "Dokument " + (n + 1) + " von " + files.length : "Dokument") +
@@ -3586,7 +4047,10 @@ $("#fu").onchange = async (e) => {
       if (!res) continue;
       const cleanName = uniqueDocName(res.name, cur, sub);
       setSt("Lade hoch: " + cleanName, "busy");
-      const j = await (await up(cleanName, f, null, targetFolder)).json();
+      const j = await withLoading(
+        { title: "Lade Dokument hoch", description: cleanName, iconName: "cloud-upload" },
+        async () => (await up(cleanName, f, null, targetFolder)).json(),
+      );
       sheetUploads.push(j.id);
       cur.docs.push({
         id: j.id,
@@ -3604,6 +4068,7 @@ $("#fu").onchange = async (e) => {
       renderDocs();
       setSt("Dokument gespeichert", "ok");
     } catch (x) {
+      recordDeveloperLog("error", "upload", "Dokument-Upload fehlgeschlagen.");
       setSt("Upload fehlgeschlagen", "err");
       await showAlert(
         "Upload fehlgeschlagen",
@@ -3638,9 +4103,11 @@ $("#docs").onclick = async (e) => {
   if (r) {
     const i = +r.dataset.r;
     if (
-      await showDeleteDialog(
+      await showConfirm(
         "Dokument löschen?",
-        "Das Dokument wird beim Speichern aus diesem Eintrag und aus Google Drive entfernt.",
+        "Das Dokument wird beim Speichern aus diesem Eintrag entfernt und in den Google-Drive-Papierkorb verschoben. Dort ist es bis zu 30 Tage wiederherstellbar.",
+        "Ja, löschen",
+        true,
       )
     ) {
       sheetRemovals.push(cur.docs[i]);
@@ -3787,9 +4254,23 @@ async function syncDocFiles(entryId) {
   if (failed) showToast("Einige Unterlagen konnten in Google Drive nicht einsortiert werden");
 }
 $("#fx2").onclick = cancelSheet;
-$("#fdel").onclick = () => {
+$("#fdel").onclick = async () => {
   const id = cur.id,
     stored = data.entries.find((x) => x.id === id);
+  if (!stored) return;
+  const docCount = (stored.docs || []).length;
+  const confirmed = await showConfirm(
+    "Eintrag löschen?",
+    "Möchtest du „" +
+      stored.title +
+      "“ wirklich löschen?" +
+      (docCount
+        ? " Zugehörige Dokumente werden nach Ablauf der Rückgängig-Frist in den Google-Drive-Papierkorb verschoben und sind dort bis zu 30 Tage wiederherstellbar."
+        : " Es sind keine Dokumente zugeordnet."),
+    "Ja, löschen",
+    true,
+  );
+  if (!confirmed || cur?.id !== id) return;
   // Files uploaded in this session are not part of the stored entry, so they go right away.
   sheetUploads.forEach((fid) => delDrive(fid));
   sheetUploads = [];
@@ -3943,7 +4424,7 @@ function resolveConflict(c, pick) {
   // Both versions now count as seen, so the next sync does not report the same conflict again.
   const base = syncBase() || {};
   base[c.id] = Math.max(c.local.upd || 0, c.remote.upd || 0);
-  localStorage.setItem("hv_synced", JSON.stringify(base));
+  localStorage.setItem(areaStorageKey("synced"), JSON.stringify(base));
   storeConflicts(loadConflicts().filter((x) => x.id !== c.id));
 }
 async function openConflicts() {
@@ -4001,7 +4482,7 @@ $("#cidSave").onclick = () => {
   const ownId = $("#cid").value.trim();
   if (ownId) localStorage.setItem("hv_cid", ownId);
   else localStorage.removeItem("hv_cid");
-  localStorage.setItem("hv_role", $("#role").value);
+  localStorage.setItem(areaStorageKey("role"), $("#role").value);
   localStorage.removeItem("hv_ok");
   tc = null;
   token = null;
@@ -4023,7 +4504,7 @@ $("#shb").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "user", role: "writer", emailAddress: m }),
     });
-    showAlert("Ordner freigegeben", "Der Ordner „Haushalt“ ist jetzt für " + m + " freigegeben.");
+    showAlert("Ordner freigegeben", "Der Ordner „" + areaFolderName() + "“ ist jetzt für " + m + " freigegeben.");
     $("#shm").value = "";
   } catch (e) {
     showAlert("Freigabe fehlgeschlagen", "Bitte die E-Mail-Adresse prüfen und erneut versuchen.");
@@ -4101,8 +4582,9 @@ $("#v-settings").onclick = (e) => {
     trashTab = b.dataset.trashTab;
     renderSettings();
   } else if (b.dataset.restore) restoreFromTrash(b.dataset.restore);
+  else if (b.dataset.purge) permanentlyDeleteFromTrash(b.dataset.purge);
   else if (b.dataset.themeSet) {
-    localStorage.setItem("hv_theme", b.dataset.themeSet);
+    localStorage.setItem(areaStorageKey("theme"), b.dataset.themeSet);
     applyTheme();
     renderSettings();
   } else if (b.dataset.backup === "json") exportJson();
@@ -4158,6 +4640,14 @@ document.querySelector("nav").addEventListener("click", (e) => {
     navigateTo(b.dataset.t);
   }
 });
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-change-area]")) openAreaPicker(true);
+});
+$("#areaPicker").addEventListener("click", (e) => {
+  const button = e.target.closest("[data-area-select]");
+  if (button) selectArea(button.dataset.areaSelect);
+});
+$("#areaCancel").addEventListener("click", () => $("#areaPicker").classList.add("hide"));
 document.querySelector("#v-home").addEventListener("click", (e) => {
   const b = e.target.closest("[data-open-calendar]");
   if (!b) return;
@@ -4173,6 +4663,15 @@ try {
   history.pushState({ narHome: true, tab: tab, guard: true }, "", location.href);
 } catch (e) {}
 window.addEventListener("popstate", (e) => {
+  if (allowExit) return;
+  if (developerMode) {
+    developerMode = false;
+    render();
+    try {
+      history.pushState({ narHome: true, tab, guard: true }, "", location.href);
+    } catch (err) {}
+    return;
+  }
   // Consume the first Back press inside the app instead of letting the browser close the page.
   const modal =
     document.querySelector(".settings-dialog-backdrop") ||
@@ -4197,17 +4696,25 @@ window.addEventListener("popstate", (e) => {
     } catch (err) {}
     return;
   }
-  // At the home screen: the first Back shows a short hint, a second Back within 2 seconds leaves the app.
-  if (Date.now() < exitArmedUntil) {
-    exitArmedUntil = 0;
-    history.back();
-    return;
-  }
-  exitArmedUntil = Date.now() + 2000;
   try {
     history.pushState({ narHome: true, tab: "home", guard: true }, "", location.href);
   } catch (err) {}
-  showToast("Zum Beenden erneut zurück");
+  showChoiceDialog({
+    title: areaLabel() + " verlassen?",
+    description: "Möchtest du die Anwendung wirklich verlassen?",
+    kicker: "Anwendung verlassen",
+    danger: false,
+    choices: [
+      { value: "stay", label: "Weiter in " + areaLabel() },
+      { value: "exit", label: "Anwendung verlassen", danger: true },
+    ],
+  }).then((choice) => {
+    if (choice === "exit") {
+      allowExit = true;
+      setTimeout(() => (allowExit = false), 1200);
+      history.go(-2);
+    }
+  });
 });
 
 /* ---- Einmaliges Einsortieren älterer Dateien in die Objekt-Ordner ---- */
@@ -4312,7 +4819,7 @@ async function resortDrive() {
 /* ---- Datensicherung ---- */
 function backupPayload() {
   return {
-    app: "NAR Home",
+    app: areaLabel(),
     format: 1,
     exportedAt: new Date().toISOString(),
     data: {
@@ -4322,6 +4829,7 @@ function backupPayload() {
       del: data.del || [],
       deletedEvents: data.deletedEvents || [],
       trash: data.trash || [],
+      purgedTrash: data.purgedTrash || [],
     },
   };
 }
@@ -4337,7 +4845,7 @@ function downloadBlob(blob, name) {
 }
 const backupName = (ext) => "NAR-Home-Backup-" + dateKey(new Date()) + "." + ext;
 function markBackupDone() {
-  localStorage.setItem("hv_last_backup", String(Date.now()));
+  localStorage.setItem(areaStorageKey("last_backup"), String(Date.now()));
   if (tab === "settings") renderSettings();
 }
 function exportJson() {
@@ -4571,7 +5079,9 @@ function emergencyHtml() {
       .filter((x) => dleft(x.d.date) >= -30 && dleft(x.d.date) <= 365)
       .sort((a, b) => a.d.date.localeCompare(b.d.date));
   let h =
-    '<header class="pm-head"><h1>NAR Home – Notfallmappe</h1><p>Stand: ' +
+    '<header class="pm-head"><h1>' +
+    esc(areaLabel()) +
+    " – Notfallmappe</h1><p>Stand: " +
     esc(today) +
     " · " +
     E.length +
@@ -4665,7 +5175,7 @@ async function printEmergency() {
 window.addEventListener("afterprint", () => $("#printArea")?.remove());
 
 /* ---- Darstellung (Hell / Dunkel / Automatisch, je Gerät) ---- */
-const themeSetting = () => localStorage.getItem("hv_theme") || "auto";
+const themeSetting = () => localStorage.getItem(areaStorageKey("theme")) || "auto";
 const darkQuery = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
 function applyTheme() {
   const s = themeSetting(),
@@ -4679,7 +5189,7 @@ function applyTheme() {
 }
 // The header button switches directly between light and dark (overrides "Automatisch").
 $("#themeToggle").onclick = () => {
-  localStorage.setItem("hv_theme", document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  localStorage.setItem(areaStorageKey("theme"), document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   applyTheme();
   if (tab === "settings") renderSettings();
 };
@@ -4800,6 +5310,12 @@ async function deleteEventById(id, fromSheet, key) {
     });
     if (!choice) return false;
     if (choice === "one") {
+      if (!(await showConfirm(
+        "Termin löschen?",
+        "Möchtest du „" + (ev.title || "Termin") + "“ am " + fmtD(key) + " wirklich löschen?",
+        "Ja, löschen",
+        true,
+      ))) return false;
       if (fromSheet) closeEvent();
       const prevDone = (ev.doneDates || []).includes(key);
       deleteWithUndo({
@@ -4825,6 +5341,20 @@ async function deleteEventById(id, fromSheet, key) {
       return true;
     }
   }
+  if (
+    !(await showConfirm(
+      isRecurring(ev) ? "Terminserie löschen?" : "Termin löschen?",
+      "Möchtest du „" +
+        (ev.title || "Termin") +
+        "“ wirklich löschen?" +
+        ((ev.files || []).length
+          ? " Zugehörige Anhänge werden nach Ablauf der Rückgängig-Frist in den Google-Drive-Papierkorb verschoben und sind dort bis zu 30 Tage wiederherstellbar."
+          : " Es sind keine Anhänge zugeordnet."),
+      "Ja, löschen",
+      true,
+    ))
+  )
+    return false;
   if (fromSheet) closeEvent();
   const index = data.events.indexOf(ev);
   deleteWithUndo({
@@ -4922,6 +5452,9 @@ $("#v-settings").addEventListener(
 
 // Google sign-in needs a tap (popup), so the app starts locally and offers a one-tap reconnect.
 if (cid()) setSt("Nicht mit Google Drive verbunden – tippen zum Verbinden");
+recordDeveloperLog("info", "system", areaLabel() + " gestartet · Sprache " + (navigator.language || "unbekannt"));
+updateAreaBrand();
+openAreaPicker(false);
 render();
 checkReminders();
 setInterval(checkReminders, 60000);
