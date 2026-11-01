@@ -1,0 +1,17 @@
+{
+  "name": "NAR Home",
+  "short_name": "NAR Home",
+  "description": "Verträge, Versicherungen, Dokumente und Familienkalender an einem Ort.",
+  "lang": "de",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1e2e3e",
+  "theme_color": "#202b3a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
